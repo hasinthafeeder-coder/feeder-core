@@ -1,0 +1,23 @@
+{
+  "name": "feeder/core",
+  "description": "Shared business logic for the Feeder Dropshipping Platform",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "Feeder\\Core\\": "src/"
+    }
+  },
+  "require": {
+    "php": "^8.3",
+    "illuminate/database": "^13.0",
+    "illuminate/support": "^13.0"
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "Feeder\\Core\\Providers\\CoreServiceProvider"
+      ]
+    }
+  }
+}
