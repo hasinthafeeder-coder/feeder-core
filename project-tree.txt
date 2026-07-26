@@ -1,0 +1,49 @@
+Folder PATH listing
+Volume serial number is 000000E2 537E:E170
+D:.
+¦   composer.json
+¦   LICENSE
+¦   project-tree.txt
+¦   README.md
+¦   
++---src
+¦   +---Contracts
+¦   ¦       FileStorageInterface.php
+¦   ¦       
+¦   +---DTOs
+¦   ¦       FileUploadData.php
+¦   ¦       
+¦   +---Enums
+¦   +---Exceptions
+¦   ¦       FileUploadException.php
+¦   ¦       
+¦   +---Helpers
+¦   ¦       Test.php
+¦   ¦       
+¦   +---Models
+¦   ¦       File.php
+¦   ¦       User.php
+¦   ¦       
+¦   +---Providers
+¦   ¦       CoreServiceProvider.php
+¦   ¦       
+¦   +---Services
+¦   ¦       FileService.php
+¦   ¦       FileStorageInterface.php
+¦   ¦       UuidService.php
+¦   ¦       
+¦   +---Traits
++---tests
++---vendor
+    ¦   autoload.php
+    ¦   
+    +---composer
+            autoload_classmap.php
+            autoload_namespaces.php
+            autoload_psr4.php
+            autoload_real.php
+            autoload_static.php
+            ClassLoader.php
+            LICENSE
+            platform_check.php
+            

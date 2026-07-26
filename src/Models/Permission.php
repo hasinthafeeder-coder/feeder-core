@@ -5,16 +5,10 @@ namespace Feeder\Core\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-class File extends Model
+class Permission extends Model
 {
     use SoftDeletes;
 
-    protected $table = 'files';
-
     protected $guarded = [];
-
-    protected $casts = [
-        'metadata' => 'array',
-        'uploaded_at' => 'datetime',
-    ];
+    protected $table = 'permissions';
 }

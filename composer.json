@@ -16,7 +16,7 @@
   "extra": {
     "laravel": {
       "providers": [
-        "Feeder\\Core\\Providers\\CoreServiceProvider"
+        "Feeder\\Core\\Providers\\FeederCoreServiceProvider"
       ]
     }
   }
