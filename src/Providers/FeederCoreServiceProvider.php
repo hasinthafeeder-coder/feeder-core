@@ -10,6 +10,8 @@ class FeederCoreServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->mergeConfigFrom(__DIR__ . '/../config/feeder.php', 'feeder');
+
         $this->app->singleton(
             PermissionServiceInterface::class,
             PermissionService::class

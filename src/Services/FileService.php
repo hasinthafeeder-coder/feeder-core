@@ -18,22 +18,30 @@ class FileService
 
     public function upload(UploadedFile $file, string $application, string $entityType, string $entityUuid, string $category, ?string $uploadedBy = null, array $metadata = [],): array
     {
-        $response = $this->client()
-            ->attach(
-                'file',
-                fopen($file->getRealPath(), 'r'),
-                $file->getClientOriginalName()
-            )
-            ->post('/api/files/upload', [
-                'application' => $application,
-                'entity_type' => $entityType,
-                'entity_uuid' => $entityUuid,
-                'category' => $category,
-                'uploaded_by' => $uploadedBy,
-                'metadata' => json_encode($metadata),
-            ])
-            ->throw();
+        $fileHandle = fopen($file->getRealPath(), 'r');
+        
+        try {
+            $response = $this->client()
+                ->attach(
+                    'file',
+                    $fileHandle,
+                    $file->getClientOriginalName()
+                )
+                ->post('/api/files/upload', [
+                    'application' => $application,
+                    'entity_type' => $entityType,
+                    'entity_uuid' => $entityUuid,
+                    'category' => $category,
+                    'uploaded_by' => $uploadedBy,
+                    'metadata' => json_encode($metadata),
+                ])
+                ->throw();
 
-        return $response->json();
+            return $response->json();
+        } finally {
+            if (is_resource($fileHandle)) {
+                fclose($fileHandle);
+            }
+        }
     }
 }
