@@ -6,12 +6,15 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Feeder\Core\Enums\UserStatus;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+
+use Feeder\Core\Enums\UserStatus;
+use Feeder\Core\Authorization\Traits\HasPermissions;
 
 class User extends Authenticatable
 {
     use SoftDeletes;
+    use HasPermissions;
 
     protected $guarded = [];
 
