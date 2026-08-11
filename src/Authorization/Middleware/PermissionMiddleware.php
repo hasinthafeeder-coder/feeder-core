@@ -16,7 +16,6 @@ class PermissionMiddleware
             abort(401);
         }
 
-
         if (!$user->hasPermission($permission)) {
             abort(403, 'Forbidden: You do not have permission to access this resource.');
         }

@@ -3,9 +3,13 @@
 namespace Feeder\Core\Authorization\Services;
 
 use Feeder\Core\Authorization\Menu\AdminMenu;
+use Feeder\Core\Authorization\Menu\ResellerMenu;
+use Feeder\Core\Authorization\Menu\SupplierMenu;
 use Feeder\Core\Authorization\Menu\Menu;
 use Feeder\Core\Authorization\Menu\MenuItem;
 use Feeder\Core\Authorization\Menu\MenuSection;
+use Feeder\Core\Enums\PortalCode;
+use Feeder\Core\Enums\UserType;
 use Feeder\Core\Models\User;
 
 class MenuService
@@ -16,8 +20,56 @@ class MenuService
 
     public function getForUser(User $user): Menu
     {
+        $menu = match ($this->resolvePortalCode($user)) {
+            PortalCode::ADMIN->value => AdminMenu::build(),
+            PortalCode::RESELLER->value => ResellerMenu::build(),
+            PortalCode::SUPPLIER->value => SupplierMenu::build(),
+
+            default => new Menu(),
+        };
+
+        return $this->filterMenu($menu, $user);
+    }
+
+    /**
+     * Menus are portal-scoped. user_type is OWNER/EMPLOYEE/SUPER_ADMIN —
+     * resolve portal from role, then company, with SUPER_ADMIN mapped to ADMIN.
+     */
+    protected function resolvePortalCode(User $user): ?string
+    {
+        if ($user->user_type === UserType::SUPER_ADMIN->value) {
+            return PortalCode::ADMIN->value;
+        }
+
+        $portalCode = $user->role?->portal?->code;
+
+        if ($portalCode) {
+            return $portalCode;
+        }
+
+        return $user->company?->portal?->code;
+    }
+
+    public function getAdminMenu(User $user): Menu
+    {
         return $this->filterMenu(
             AdminMenu::build(),
+            $user
+        );
+    }
+
+    public function getResellerMenu(User $user): Menu
+    {
+        return $this->filterMenu(
+            ResellerMenu::build(),
+            $user
+        );
+    }
+
+    public function getSupplierMenu(User $user): Menu
+    {
+        return $this->filterMenu(
+            SupplierMenu::build(),
             $user
         );
     }

@@ -25,7 +25,7 @@ trait HasPermissions
             ->hasAllPermissions($this, $permissions);
     }
 
-    public function permissions(): Collection
+    public function effectivePermissions(): Collection
     {
         return app(PermissionService::class)
             ->getEffectivePermissions($this);

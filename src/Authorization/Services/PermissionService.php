@@ -17,49 +17,23 @@ class PermissionService
     public function hasAnyPermission(User $user, array $permissions): bool
     {
         return $this->getEffectivePermissions($user)
-            ->intersect($permissions)->isNotEmpty();
+            ->intersect($permissions)
+            ->isNotEmpty();
     }
 
     public function hasAllPermissions(User $user, array $permissions): bool
     {
-        return collect($permissions)->diff($this->getEffectivePermissions($user))->isEmpty();
+        return collect($permissions)
+            ->diff($this->getEffectivePermissions($user))
+            ->isEmpty();
     }
-
-    // public function getEffectivePermissions(User $user): Collection
-    // {
-    //     return Cache::rememberForever(
-    //         $this->getCacheKey($user),
-    //         function () use ($user) {
-    //             if (!$user->role) {
-    //                 return collect();
-    //             }
-
-    //             $permissions = $user->role
-    //                 ->permissions()
-    //                 ->pluck('slug')
-    //                 ->flip();
-
-    //             $user->directPermissions()
-    //                 ->select('permissions.slug', 'user_permissions.allowed')
-    //                 ->get()
-    //                 ->each(function ($permission) use ($permissions) {
-    //                     if ($permission->pivot->allowed) {
-    //                         $permissions->put($permission->slug, true);
-    //                     } else {
-    //                         $permissions->forget($permission->slug);
-    //                     }
-    //                 });
-
-    //             return $permissions->keys()->values();
-    //         }
-    //     );
-    // }
 
     public function getEffectivePermissions(User $user): Collection
     {
         $permissions = Cache::rememberForever(
             $this->getCacheKey($user),
             function () use ($user) {
+
                 if (!$user->role) {
                     return [];
                 }
@@ -70,17 +44,29 @@ class PermissionService
                     ->flip();
 
                 $user->directPermissions()
-                    ->select('permissions.slug', 'user_permissions.allowed')
+                    ->select(
+                        'permissions.slug',
+                        'user_permissions.allowed'
+                    )
                     ->get()
                     ->each(function ($permission) use ($permissions) {
+
                         if ($permission->pivot->allowed) {
-                            $permissions->put($permission->slug, true);
+                            $permissions->put(
+                                $permission->slug,
+                                true
+                            );
                         } else {
-                            $permissions->forget($permission->slug);
+                            $permissions->forget(
+                                $permission->slug
+                            );
                         }
                     });
 
-                return $permissions->keys()->values()->all();
+                return $permissions
+                    ->keys()
+                    ->values()
+                    ->all();
             }
         );
 
@@ -89,12 +75,15 @@ class PermissionService
 
     public function forgetCache(User $user): void
     {
-        Cache::forget($this->getCacheKey($user));
+        Cache::forget(
+            $this->getCacheKey($user)
+        );
     }
 
     public function rebuildCache(User $user): Collection
     {
         $this->forgetCache($user);
+
         return $this->getEffectivePermissions($user);
     }
 
