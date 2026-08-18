@@ -71,6 +71,26 @@ class ResellerMenu
 
         /*
         |--------------------------------------------------------------------------
+        | TEAM
+        |--------------------------------------------------------------------------
+        */
+
+        $menu->addSection(
+            MenuSection::make('TEAM')
+                ->addItem(
+                    MenuItem::make('Team')
+                        ->icon('groups')
+                        ->permission('team.structure.view')
+                        ->children([
+                            MenuItem::make('Team Tree')
+                                ->route('team.structure')
+                                ->permission('team.structure.view'),
+                        ])
+                )
+        );
+
+        /*
+        |--------------------------------------------------------------------------
         | CUSTOMERS
         |--------------------------------------------------------------------------
         */
