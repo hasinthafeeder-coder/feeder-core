@@ -453,6 +453,20 @@ class ReferralService
             ->all();
     }
 
+    public function getDirectIntroducer(User $user): ?User
+    {
+        $relationship = ReferralRelationship::query()
+            ->where('child_user_id', $user->id)
+            ->whereNull('deleted_at')
+            ->first();
+
+        if ($relationship === null) {
+            return null;
+        }
+
+        return $relationship->parent()->first();
+    }
+
     public function generateUniqueCode(): string
     {
         for ($attempt = 0; $attempt < 25; $attempt++) {

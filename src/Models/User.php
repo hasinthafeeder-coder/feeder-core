@@ -81,6 +81,7 @@ class User extends Authenticatable
             'status' => UserStatus::class,
             'is_master_reseller' => 'boolean',
             'last_login_at' => 'datetime',
+            'reseller_service_charge_override' => 'decimal:2',
         ];
     }
 }

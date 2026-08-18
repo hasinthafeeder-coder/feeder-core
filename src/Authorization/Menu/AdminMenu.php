@@ -235,6 +235,16 @@ class AdminMenu
         );
 
         $menu->addSection(
+            MenuSection::make('SETTINGS')
+                ->addItem(
+                    MenuItem::make('Financial Settings')
+                        ->icon('account_balance')
+                        ->route('settings.financial')
+                        ->permission('settings.view')
+                )
+        );
+
+        $menu->addSection(
             MenuSection::make('TAX & VAT')
                 ->addItem(
                     MenuItem::make('TAX')
