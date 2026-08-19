@@ -115,6 +115,10 @@ class AdminMenu
                                 ->route('products.index')
                                 ->permission('products.view'),
 
+                            MenuItem::make('Product Categories')
+                                ->route('product-categories.index')
+                                ->permission('product_categories.view'),
+
                             MenuItem::make('Product Details')
                                 ->route('products.details')
                                 ->permission('products.details'),
