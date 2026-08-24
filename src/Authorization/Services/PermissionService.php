@@ -8,6 +8,13 @@ use Illuminate\Support\Facades\Cache;
 
 class PermissionService
 {
+    /**
+     * In-request memoization to avoid recalculating cache keys repeatedly.
+     *
+     * @var array<int, string>
+     */
+    protected array $resolvedCacheKeys = [];
+
     public function hasPermission(User $user, string $permission): bool
     {
         return $this->getEffectivePermissions($user)
@@ -89,6 +96,27 @@ class PermissionService
 
     protected function getCacheKey(User $user): string
     {
-        return "permissions:user:{$user->id}";
+        if (isset($this->resolvedCacheKeys[$user->id])) {
+            return $this->resolvedCacheKeys[$user->id];
+        }
+
+        $rolePermissionsUpdatedAt = $user->role
+            ? $user->role->permissions()->max('role_permissions.updated_at')
+            : null;
+
+        $userPermissionsUpdatedAt = $user->directPermissions()
+            ->max('user_permissions.updated_at');
+
+        $version = implode(':', [
+            $user->role_id ?? 'no-role',
+            $rolePermissionsUpdatedAt ?? '0',
+            $userPermissionsUpdatedAt ?? '0',
+        ]);
+
+        $key = "permissions:user:{$user->id}:{$version}";
+
+        $this->resolvedCacheKeys[$user->id] = $key;
+
+        return $key;
     }
 }

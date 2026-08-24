@@ -18,6 +18,24 @@ class SupplierMenu
                 )
         );
 
+        $menu->addSection(
+            MenuSection::make('PRODUCTS')
+                ->addItem(
+                    MenuItem::make('Products')
+                        ->icon('inventory_2')
+                        ->permission('products.view')
+                        ->children([
+                            MenuItem::make('All Products')
+                                ->route('products.index')
+                                ->permission('products.view'),
+
+                            MenuItem::make('Create Product')
+                                ->route('products.create')
+                                ->permission('products.create'),
+                        ])
+                )
+        );
+
         return $menu;
     }
 }
