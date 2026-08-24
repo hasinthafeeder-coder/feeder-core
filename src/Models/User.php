@@ -75,6 +75,17 @@ class User extends Authenticatable
         return 'uuid';
     }
 
+    /**
+     * Products supplied by this user.
+     */
+    public function suppliedProducts(): HasMany
+    {
+        return $this->hasMany(
+            Product::class,
+            'supplier_id'
+        );
+    }
+
     protected function casts(): array
     {
         return [

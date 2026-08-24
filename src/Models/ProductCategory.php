@@ -2,6 +2,7 @@
 
 namespace Feeder\Core\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -13,8 +14,6 @@ class ProductCategory extends Model
     public $incrementing = false;
 
     protected $keyType = 'string';
-
-    protected $guarded = [];
 
     protected $fillable = [
         'id',
@@ -36,39 +35,72 @@ class ProductCategory extends Model
         ];
     }
 
+    /**
+     * Parent category.
+     */
     public function parent(): BelongsTo
     {
-        return $this->belongsTo(self::class, 'parent_id');
+        return $this->belongsTo(
+            self::class,
+            'parent_id'
+        );
     }
 
+    /**
+     * Direct child categories.
+     */
     public function children(): HasMany
     {
-        return $this->hasMany(self::class, 'parent_id')
+        return $this->hasMany(
+            self::class,
+            'parent_id'
+        )
             ->orderBy('sort_order')
             ->orderBy('name');
     }
 
+    /**
+     * User who created the category.
+     */
     public function createdBy(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(
+            User::class,
+            'created_by'
+        );
     }
 
+    /**
+     * User who last updated the category.
+     */
     public function updatedBy(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'updated_by');
+        return $this->belongsTo(
+            User::class,
+            'updated_by'
+        );
     }
 
-    public function scopeActive($query)
+    /**
+     * Only active categories.
+     */
+    public function scopeActive(Builder $query): Builder
     {
         return $query->where('is_active', true);
     }
 
-    public function scopeRoot($query)
+    /**
+     * Only root categories.
+     */
+    public function scopeRoot(Builder $query): Builder
     {
         return $query->whereNull('parent_id');
     }
 
-    public function scopeOrdered($query)
+    /**
+     * Categories in hierarchical display order.
+     */
+    public function scopeOrdered(Builder $query): Builder
     {
         return $query
             ->orderBy('parent_id')
