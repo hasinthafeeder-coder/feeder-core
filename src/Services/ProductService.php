@@ -9,10 +9,31 @@ use Feeder\Core\Models\ProductGuideline;
 use Feeder\Core\Models\ProductImage;
 use Feeder\Core\Models\ProductVariant;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 class ProductService
 {
+    protected function generateUniqueSlug(string $value, ?int $ignoreId = null): string
+    {
+        $base = trim((string) \Illuminate\Support\Str::slug($value ?: 'product'));
+
+        if ($base === '') {
+            $base = 'product';
+        }
+
+        $slug = $base;
+        $count = 1;
+
+        while (Product::query()
+            ->where('slug', $slug)
+            ->when($ignoreId !== null, fn ($query) => $query->whereKeyNot($ignoreId))
+            ->exists()) {
+            $slug = $base . '-' . $count;
+            $count++;
+        }
+
+        return $slug;
+    }
+
     public function createProduct(
         array $productData,
         array $descriptions = [],
@@ -21,64 +42,63 @@ class ProductService
         ?array $guideline = null
     ): Product {
         return DB::transaction(function () use ($productData, $descriptions, $variants, $images, $guideline) {
+            $slug = $this->generateUniqueSlug($productData['slug'] ?? $productData['name']);
+
             $product = Product::query()->create([
-                'id' => $productData['id'] ?? (string) Str::uuid(),
-                'supplier_id' => $productData['supplier_id'],
-                'category_id' => $productData['category_id'],
-                'name' => $productData['name'],
-                'weight' => $productData['weight'],
-                'status' => $productData['status'] ?? ProductStatus::DRAFT,
-                'system_visible' => $productData['system_visible'] ?? true,
-                'web_visible' => $productData['web_visible'] ?? true,
-                'price_locked' => $productData['price_locked'] ?? false,
-                'created_by' => $productData['created_by'] ?? $productData['supplier_id'],
-                'updated_by' => $productData['updated_by'] ?? $productData['supplier_id'],
+               'uuid' => $productData['uuid'] ?? (string) \Illuminate\Support\Str::uuid(),
+               'supplier_id' => $productData['supplier_id'],
+               'category_id' => $productData['category_id'],
+               'name' => $productData['name'],
+               'slug' => $slug,
+               'status' => $productData['status'] ?? ProductStatus::DRAFT,
+               'system_visible' => $productData['system_visible'] ?? true,
+               'web_visible' => $productData['web_visible'] ?? true,
+               'price_locked' => $productData['price_locked'] ?? false,
+               'created_by' => $productData['created_by'] ?? $productData['supplier_id'],
+               'updated_by' => $productData['updated_by'] ?? $productData['supplier_id'],
             ]);
 
             foreach ($descriptions as $description) {
-                ProductDescription::query()->create([
-                    'id' => $description['id'] ?? (string) Str::uuid(),
-                    'product_id' => $product->id,
-                    'locale' => $description['locale'],
-                    'description' => $description['description'] ?? null,
-                    'created_by' => $description['created_by'] ?? $product->supplier_id,
-                    'updated_by' => $description['updated_by'] ?? $product->supplier_id,
-                ]);
+               ProductDescription::query()->create([
+                   'product_id' => $product->id,
+                   'locale' => $description['locale'],
+                   'description' => $description['description'] ?? null,
+                   'created_by' => $description['created_by'] ?? $product->supplier_id,
+                   'updated_by' => $description['updated_by'] ?? $product->supplier_id,
+               ]);
             }
 
             foreach ($variants as $index => $variant) {
-                ProductVariant::query()->create([
-                    'id' => $variant['id'] ?? (string) Str::uuid(),
-                    'product_id' => $product->id,
-                    'name' => $variant['name'],
-                    'barcode' => $variant['barcode'] ?? null,
-                    'cost' => $variant['cost'],
-                    'selling_price' => $variant['selling_price'],
-                    'suggested_price' => $variant['suggested_price'] ?? null,
-                    'company_commission' => $variant['company_commission'] ?? 150.00,
-                    'sort_order' => $variant['sort_order'] ?? $index,
-                    'is_active' => $variant['is_active'] ?? true,
-                    'created_by' => $variant['created_by'] ?? $product->supplier_id,
-                    'updated_by' => $variant['updated_by'] ?? $product->supplier_id,
-                ]);
+               ProductVariant::query()->create([
+                   'product_id' => $product->id,
+                   'name' => $variant['name'],
+                   'barcode' => $variant['barcode'] ?? null,
+                   'cost' => $variant['cost'],
+                   'selling_price' => $variant['selling_price'],
+                   'weight' => $variant['weight'] ?? null,
+                   'suggested_price' => $variant['suggested_price'] ?? null,
+                   'company_commission' => $variant['company_commission'] ?? 150.00,
+                   'sort_order' => $variant['sort_order'] ?? $index,
+                   'is_active' => $variant['is_active'] ?? true,
+                   'created_by' => $variant['created_by'] ?? $product->supplier_id,
+                   'updated_by' => $variant['updated_by'] ?? $product->supplier_id,
+               ]);
             }
 
             foreach ($images as $index => $image) {
-                ProductImage::query()->create([
-                    'id' => $image['id'] ?? (string) Str::uuid(),
-                    'product_id' => $product->id,
-                    'file_uuid' => $image['file_uuid'],
-                    'sort_order' => $image['sort_order'] ?? $index,
-                    'is_primary' => $image['is_primary'] ?? ($index === 0),
-                ]);
+               ProductImage::query()->create([
+                   'product_id' => $product->id,
+                   'file_uuid' => $image['file_uuid'],
+                   'sort_order' => $image['sort_order'] ?? $index,
+                   'is_primary' => $image['is_primary'] ?? ($index === 0),
+               ]);
             }
 
             if ($guideline) {
-                ProductGuideline::query()->create([
-                    'id' => $guideline['id'] ?? (string) Str::uuid(),
-                    'product_id' => $product->id,
-                    'file_uuid' => $guideline['file_uuid'],
-                ]);
+               ProductGuideline::query()->create([
+                   'product_id' => $product->id,
+                   'file_uuid' => $guideline['file_uuid'],
+               ]);
             }
 
             return $product->load(['supplier', 'category', 'descriptions', 'variants', 'images', 'guideline']);
@@ -97,12 +117,11 @@ class ProductService
             $product->fill([
                 'category_id' => $productData['category_id'] ?? $product->category_id,
                 'name' => $productData['name'] ?? $product->name,
-                'weight' => $productData['weight'] ?? $product->weight,
-                'status' => $productData['status'] ?? $product->status,
-                'system_visible' => $productData['system_visible'] ?? $product->system_visible,
-                'web_visible' => $productData['web_visible'] ?? $product->web_visible,
-                'price_locked' => $productData['price_locked'] ?? $product->price_locked,
-                'updated_by' => $productData['updated_by'] ?? $product->supplier_id,
+               'status' => $productData['status'] ?? $product->status,
+               'system_visible' => $productData['system_visible'] ?? $product->system_visible,
+               'web_visible' => $productData['web_visible'] ?? $product->web_visible,
+               'price_locked' => $productData['price_locked'] ?? $product->price_locked,
+               'updated_by' => $productData['updated_by'] ?? $product->supplier_id,
             ]);
             $product->save();
 
@@ -137,6 +156,7 @@ class ProductService
                     'barcode' => $variant['barcode'] ?? null,
                     'cost' => $variant['cost'],
                     'selling_price' => $variant['selling_price'],
+                    'weight' => $variant['weight'] ?? null,
                     'suggested_price' => $variant['suggested_price'] ?? null,
                     'company_commission' => $variant['company_commission'] ?? 150.00,
                     'sort_order' => $variant['sort_order'] ?? $index,
@@ -154,20 +174,26 @@ class ProductService
                     }
                 }
 
-                ProductVariant::query()->create([
-                    'id' => $variantId ?? (string) Str::uuid(),
+                $newVariantAttributes = [
                     'product_id' => $product->id,
                     'name' => $attributes['name'],
                     'barcode' => $attributes['barcode'],
                     'cost' => $attributes['cost'],
                     'selling_price' => $attributes['selling_price'],
+                    'weight' => $attributes['weight'],
                     'suggested_price' => $attributes['suggested_price'],
                     'company_commission' => $attributes['company_commission'],
                     'sort_order' => $attributes['sort_order'],
                     'is_active' => $attributes['is_active'],
                     'created_by' => $variant['created_by'] ?? $product->supplier_id,
                     'updated_by' => $attributes['updated_by'],
-                ]);
+                ];
+
+                if ($variantId) {
+                    $newVariantAttributes['id'] = $variantId;
+                }
+
+                ProductVariant::query()->create($newVariantAttributes);
             }
 
             foreach ($images as $index => $image) {
@@ -192,13 +218,18 @@ class ProductService
                     }
                 }
 
-                ProductImage::query()->create([
-                    'id' => $imageId ?? (string) Str::uuid(),
+                $newImageAttributes = [
                     'product_id' => $product->id,
                     'file_uuid' => $image['file_uuid'],
                     'sort_order' => $image['sort_order'] ?? $index,
                     'is_primary' => $image['is_primary'] ?? ($index === 0),
-                ]);
+                ];
+
+                if ($imageId) {
+                    $newImageAttributes['id'] = $imageId;
+                }
+
+                ProductImage::query()->create($newImageAttributes);
             }
 
             if ($guideline !== null) {

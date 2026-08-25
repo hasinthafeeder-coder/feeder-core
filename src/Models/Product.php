@@ -10,22 +10,24 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class Product extends Model
 {
     use HasFactory, SoftDeletes;
 
-    public $incrementing = false;
+    public $incrementing = true;
 
-    protected $keyType = 'string';
+    protected $keyType = 'int';
 
     protected $fillable = [
        'id',
+       'uuid',
        'supplier_id',
        'category_id',
        'name',
-       'weight',
+       'slug',
        'status',
        'system_visible',
        'web_visible',
@@ -37,7 +39,6 @@ class Product extends Model
     protected function casts(): array
     {
        return [
-           'weight' => 'decimal:3',
            'system_visible' => 'boolean',
            'web_visible' => 'boolean',
            'price_locked' => 'boolean',
@@ -48,13 +49,30 @@ class Product extends Model
     protected static function booted(): void
     {
        static::creating(function (Product $product): void {
-           $product->id ??= (string) Str::uuid();
+           if (Schema::hasColumn($product->getTable(), 'uuid') && empty($product->uuid)) {
+               $product->uuid = (string) Str::uuid();
+           }
+
+           if (empty($product->id) && static::shouldGenerateUuidPrimaryKey()) {
+               $product->id = (string) Str::uuid();
+           }
        });
+    }
+
+    public static function shouldGenerateUuidPrimaryKey(): bool
+    {
+       if (! Schema::hasTable((new static)->getTable())) {
+           return false;
+       }
+
+       $columnType = Schema::getColumnType((new static)->getTable(), 'id');
+
+       return in_array($columnType, ['string', 'char', 'uuid', 'ulid'], true);
     }
 
     public function getRouteKeyName(): string
     {
-       return 'id';
+       return Schema::hasColumn($this->getTable(), 'uuid') ? 'uuid' : 'id';
     }
 
     public function supplier(): BelongsTo
