@@ -4,7 +4,6 @@ namespace Feeder\Core\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class ProductVariant extends Model
@@ -14,7 +13,6 @@ class ProductVariant extends Model
     protected $keyType = 'int';
 
     protected $fillable = [
-        'id',
         'uuid',
         'product_id',
         'name',
@@ -46,8 +44,12 @@ class ProductVariant extends Model
     protected static function booted(): void
     {
         static::creating(function (ProductVariant $variant): void {
-            if (Schema::hasColumn($variant->getTable(), 'uuid') && empty($variant->uuid)) {
+            if (empty($variant->uuid)) {
                 $variant->uuid = (string) Str::uuid();
+            }
+
+            if ($variant->barcode === null || $variant->barcode === '') {
+                $variant->barcode = 'AUTO-' . strtoupper(Str::random(12));
             }
         });
     }

@@ -4,8 +4,6 @@ namespace Feeder\Core\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\Str;
 
 class ProductImage extends Model
 {
@@ -14,11 +12,14 @@ class ProductImage extends Model
     protected $keyType = 'int';
 
     protected $fillable = [
-        'id',
         'product_id',
         'file_id',
         'sort_order',
         'is_primary',
+    ];
+
+    protected $appends = [
+        'file_uuid',
     ];
 
     protected function casts(): array
@@ -29,28 +30,18 @@ class ProductImage extends Model
         ];
     }
 
-    protected static function booted(): void
-    {
-        static::creating(function (ProductImage $image): void {
-            if (empty($image->id) && static::shouldGenerateUuidPrimaryKey()) {
-                $image->id = (string) Str::uuid();
-            }
-        });
-    }
-
-    public static function shouldGenerateUuidPrimaryKey(): bool
-    {
-        if (! Schema::hasTable((new static)->getTable())) {
-            return false;
-        }
-
-        $columnType = Schema::getColumnType((new static)->getTable(), 'id');
-
-        return in_array($columnType, ['string', 'char', 'uuid', 'ulid'], true);
-    }
-
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    public function file(): BelongsTo
+    {
+        return $this->belongsTo(File::class, 'file_id');
+    }
+
+    public function getFileUuidAttribute(): ?string
+    {
+        return $this->file?->uuid;
     }
 }

@@ -5,17 +5,16 @@ namespace Feeder\Core\Services;
 use Feeder\Core\Enums\ProductStatus;
 use Feeder\Core\Models\Product;
 use Feeder\Core\Models\ProductDescription;
-use Feeder\Core\Models\ProductGuideline;
 use Feeder\Core\Models\ProductImage;
 use Feeder\Core\Models\ProductVariant;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class ProductService
 {
     protected function generateUniqueSlug(string $value, ?int $ignoreId = null): string
     {
-        $base = trim((string) \Illuminate\Support\Str::slug($value ?: 'product'));
+        $base = trim((string) Str::slug($value ?: 'product'));
 
         if ($base === '') {
             $base = 'product';
@@ -35,6 +34,23 @@ class ProductService
         return $slug;
     }
 
+    public function resolveStatus(
+        string $action,
+        ?ProductStatus $currentStatus = null,
+        bool $isCreate = false
+    ): ProductStatus {
+        return match ($action) {
+            'publish', 'activate' => ProductStatus::ACTIVE,
+            'deactivate' => ProductStatus::INACTIVE,
+            'draft' => ($isCreate || $currentStatus === null || $currentStatus === ProductStatus::DRAFT)
+                ? ProductStatus::DRAFT
+                : $currentStatus,
+            default => $isCreate
+                ? ProductStatus::DRAFT
+                : ($currentStatus ?? ProductStatus::DRAFT),
+        };
+    }
+
     public function createProduct(
         array $productData,
         array $descriptions = [],
@@ -43,84 +59,37 @@ class ProductService
         ?array $guideline = null
     ): Product {
         return DB::transaction(function () use ($productData, $descriptions, $variants, $images, $guideline) {
-            $slug = $this->generateUniqueSlug($productData['slug'] ?? $productData['name']);
+            $status = $productData['status'] instanceof ProductStatus
+                ? $productData['status']
+                : ProductStatus::from((string) ($productData['status'] ?? ProductStatus::DRAFT->value));
 
             $product = Product::query()->create([
-               'uuid' => $productData['uuid'] ?? (string) \Illuminate\Support\Str::uuid(),
-               'supplier_id' => $productData['supplier_id'],
-               'category_id' => $productData['category_id'],
-               'name' => $productData['name'],
-               'slug' => $slug,
-               'status' => $productData['status'] ?? ProductStatus::DRAFT,
-               'system_visible' => $productData['system_visible'] ?? true,
-               'web_visible' => $productData['web_visible'] ?? true,
-               'price_locked' => $productData['price_locked'] ?? false,
-               'created_by' => $productData['created_by'] ?? $productData['supplier_id'],
-               'updated_by' => $productData['updated_by'] ?? $productData['supplier_id'],
+                'uuid' => $productData['uuid'] ?? (string) Str::uuid(),
+                'supplier_id' => $productData['supplier_id'],
+                'category_id' => $productData['category_id'],
+                'name' => $productData['name'],
+                'slug' => $this->generateUniqueSlug($productData['slug'] ?? $productData['name']),
+                'status' => $status,
+                'system_visible' => $productData['system_visible'] ?? true,
+                'web_visible' => $productData['web_visible'] ?? true,
+                'price_locked' => $productData['price_locked'] ?? false,
+                'guideline_file_id' => $guideline['file_id'] ?? $productData['guideline_file_id'] ?? null,
+                'published_at' => $status === ProductStatus::ACTIVE
+                    ? ($productData['published_at'] ?? now())
+                    : null,
+                'created_by' => $productData['created_by'] ?? $productData['supplier_id'],
+                'updated_by' => $productData['updated_by'] ?? $productData['supplier_id'],
             ]);
 
-            foreach ($descriptions as $description) {
-               $languageCode = $description['language_code'] ?? $description['locale'] ?? null;
+            $this->syncDescriptions($product, $descriptions);
+            $this->syncVariants(
+                $product,
+                $this->applyPriceLockToVariants($variants, (bool) ($productData['price_locked'] ?? false)),
+                true
+            );
+            $this->syncImages($product, $images, true);
 
-               if (! $languageCode) {
-                   continue;
-               }
-
-               ProductDescription::query()->create([
-                   'product_id' => $product->id,
-                   'language_code' => $languageCode,
-                   'description' => $description['description'] ?? null,
-               ]);
-            }
-
-            foreach ($variants as $index => $variant) {
-               ProductVariant::query()->create([
-                   'uuid' => (string) \Illuminate\Support\Str::uuid(),
-                   'product_id' => $product->id,
-                   'name' => $variant['name'],
-                   'barcode' => (string) ($variant['barcode'] ?? ''),
-                   'cost' => $variant['cost'],
-                   'selling_price' => $variant['selling_price'],
-                   'weight' => $variant['weight'] ?? null,
-                   'suggested_price' => $variant['suggested_price'] ?? null,
-                   'company_commission' => $variant['company_commission'] ?? 150.00,
-                   'sort_order' => $variant['sort_order'] ?? $index,
-                   'is_active' => $variant['is_active'] ?? true,
-                   'created_by' => $variant['created_by'] ?? $product->supplier_id,
-                   'updated_by' => $variant['updated_by'] ?? $product->supplier_id,
-               ]);
-            }
-
-            foreach ($images as $index => $image) {
-               $fileId = $image['file_id'] ?? $image['file_uuid'] ?? null;
-               if (! is_numeric($fileId)) {
-                   continue;
-               }
-
-               ProductImage::query()->create([
-                   'product_id' => $product->id,
-                   'file_id' => (int) $fileId,
-                   'sort_order' => $image['sort_order'] ?? $index,
-                   'is_primary' => $image['is_primary'] ?? ($index === 0),
-               ]);
-            }
-
-            if ($guideline && Schema::hasTable('product_guidelines')) {
-               $fileId = $guideline['file_id'] ?? $guideline['file_uuid'] ?? null;
-               if (is_numeric($fileId)) {
-                   ProductGuideline::query()->create([
-                       'product_id' => $product->id,
-                       'file_id' => (int) $fileId,
-                   ]);
-               }
-            }
-
-            $relations = ['supplier', 'category', 'descriptions', 'variants', 'images'];
-            if (Schema::hasTable('product_guidelines')) {
-                $relations[] = 'guideline';
-            }
-
-            return $product->load($relations);
+            return $product->load($this->defaultRelations());
         });
     }
 
@@ -133,143 +102,235 @@ class ProductService
         ?array $guideline = null
     ): Product {
         return DB::transaction(function () use ($product, $productData, $descriptions, $variants, $images, $guideline) {
-            $product->fill([
+            $status = array_key_exists('status', $productData)
+                ? ($productData['status'] instanceof ProductStatus
+                    ? $productData['status']
+                    : ProductStatus::from((string) $productData['status']))
+                : $product->status;
+
+            $fill = [
                 'category_id' => $productData['category_id'] ?? $product->category_id,
                 'name' => $productData['name'] ?? $product->name,
-               'status' => $productData['status'] ?? $product->status,
-               'system_visible' => $productData['system_visible'] ?? $product->system_visible,
-               'web_visible' => $productData['web_visible'] ?? $product->web_visible,
-               'price_locked' => $productData['price_locked'] ?? $product->price_locked,
-               'updated_by' => $productData['updated_by'] ?? $product->supplier_id,
-            ]);
-            $product->save();
+                'status' => $status,
+                'system_visible' => $productData['system_visible'] ?? $product->system_visible,
+                'web_visible' => $productData['web_visible'] ?? $product->web_visible,
+                'price_locked' => $productData['price_locked'] ?? $product->price_locked,
+                'updated_by' => $productData['updated_by'] ?? $product->supplier_id,
+            ];
 
-            foreach ($descriptions as $description) {
-                $languageCode = $description['language_code'] ?? $description['locale'] ?? null;
-
-                if (! $languageCode) {
-                    continue;
-                }
-
-                ProductDescription::query()->updateOrCreate(
-                    ['product_id' => $product->id, 'language_code' => $languageCode],
-                    [
-                        'description' => $description['description'] ?? null,
-                    ]
-                );
-            }
-
-            foreach ($variants as $index => $variant) {
-                $variantId = $variant['id'] ?? null;
-
-                if (($variant['delete'] ?? false) && $variantId) {
-                    $product->variants()->whereKey($variantId)->delete();
-                    continue;
-                }
-
-                $attributes = [
-                    'product_id' => $product->id,
-                    'name' => $variant['name'],
-                    'barcode' => $variant['barcode'] ?? null,
-                    'cost' => $variant['cost'],
-                    'selling_price' => $variant['selling_price'],
-                    'weight' => $variant['weight'] ?? null,
-                    'suggested_price' => $variant['suggested_price'] ?? null,
-                    'company_commission' => $variant['company_commission'] ?? 150.00,
-                    'sort_order' => $variant['sort_order'] ?? $index,
-                    'is_active' => $variant['is_active'] ?? true,
-                    'updated_by' => $variant['updated_by'] ?? $product->supplier_id,
-                ];
-
-                if ($variantId) {
-                    $existing = $product->variants()->whereKey($variantId)->first();
-
-                    if ($existing) {
-                        $existing->fill($attributes);
-                        $existing->save();
-                        continue;
-                    }
-                }
-
-                $newVariantAttributes = [
-                    'product_id' => $product->id,
-                    'name' => $attributes['name'],
-                    'barcode' => (string) ($attributes['barcode'] ?? ''),
-                    'cost' => $attributes['cost'],
-                    'selling_price' => $attributes['selling_price'],
-                    'weight' => $attributes['weight'],
-                    'suggested_price' => $attributes['suggested_price'],
-                    'company_commission' => $attributes['company_commission'],
-                    'sort_order' => $attributes['sort_order'],
-                    'is_active' => $attributes['is_active'],
-                    'created_by' => $variant['created_by'] ?? $product->supplier_id,
-                    'updated_by' => $attributes['updated_by'],
-                ];
-
-                if (Schema::hasColumn('product_variants', 'uuid') && empty($newVariantAttributes['uuid'] ?? null)) {
-                    $newVariantAttributes['uuid'] = (string) \Illuminate\Support\Str::uuid();
-                }
-
-                if ($variantId) {
-                    $newVariantAttributes['id'] = $variantId;
-                }
-
-                ProductVariant::query()->create($newVariantAttributes);
-            }
-
-            foreach ($images as $index => $image) {
-                $imageId = $image['id'] ?? null;
-
-                if (($image['delete'] ?? false) && $imageId) {
-                    $product->images()->whereKey($imageId)->delete();
-                    continue;
-                }
-
-                if ($imageId) {
-                    $existing = $product->images()->whereKey($imageId)->first();
-
-                    if ($existing) {
-                        $existing->fill([
-                            'file_uuid' => $image['file_uuid'] ?? $existing->file_uuid,
-                            'sort_order' => $image['sort_order'] ?? $index,
-                            'is_primary' => $image['is_primary'] ?? $existing->is_primary,
-                        ]);
-                        $existing->save();
-                        continue;
-                    }
-                }
-
-                $newImageAttributes = [
-                    'product_id' => $product->id,
-                    'file_uuid' => $image['file_uuid'],
-                    'sort_order' => $image['sort_order'] ?? $index,
-                    'is_primary' => $image['is_primary'] ?? ($index === 0),
-                ];
-
-                if ($imageId) {
-                    $newImageAttributes['id'] = $imageId;
-                }
-
-                ProductImage::query()->create($newImageAttributes);
+            if (array_key_exists('name', $productData) && $productData['name'] !== $product->name) {
+                $fill['slug'] = $this->generateUniqueSlug($productData['name'], $product->id);
             }
 
             if ($guideline !== null) {
-                if (empty($guideline['file_uuid'])) {
-                    $product->guideline()->delete();
-                } else {
-                    ProductGuideline::query()->updateOrCreate(
-                        ['product_id' => $product->id],
-                        ['file_uuid' => $guideline['file_uuid']]
-                    );
+                $fill['guideline_file_id'] = $guideline['file_id'] ?? null;
+            }
+
+            if ($status === ProductStatus::ACTIVE && $product->published_at === null) {
+                $fill['published_at'] = now();
+            }
+
+            $product->fill($fill);
+            $product->save();
+
+            $this->syncDescriptions($product, $descriptions);
+            $this->syncVariants(
+                $product,
+                $this->applyPriceLockToVariants(
+                    $variants,
+                    (bool) ($productData['price_locked'] ?? $product->price_locked)
+                ),
+                false
+            );
+            $this->syncImages($product, $images, false);
+
+            return $product->refresh()->load($this->defaultRelations());
+        });
+    }
+
+    public function deactivateProduct(Product $product, ?int $updatedBy = null): Product
+    {
+        if ($product->status !== ProductStatus::ACTIVE) {
+            return $product;
+        }
+
+        $product->fill([
+            'status' => ProductStatus::INACTIVE,
+            'updated_by' => $updatedBy ?? $product->supplier_id,
+        ]);
+        $product->save();
+
+        return $product->refresh()->load($this->defaultRelations());
+    }
+
+    public function activateProduct(Product $product, ?int $updatedBy = null): Product
+    {
+        if ($product->status !== ProductStatus::INACTIVE && $product->status !== ProductStatus::DRAFT) {
+            return $product;
+        }
+
+        $product->fill([
+            'status' => ProductStatus::ACTIVE,
+            'published_at' => $product->published_at ?? now(),
+            'updated_by' => $updatedBy ?? $product->supplier_id,
+        ]);
+        $product->save();
+
+        return $product->refresh()->load($this->defaultRelations());
+    }
+
+    public function deleteProduct(Product $product): void
+    {
+        DB::transaction(function () use ($product) {
+            $product->delete();
+        });
+    }
+
+    protected function applyPriceLockToVariants(array $variants, bool $priceLocked): array
+    {
+        if (! $priceLocked) {
+            return $variants;
+        }
+
+        foreach ($variants as $index => $variant) {
+            if (($variant['delete'] ?? false) === true) {
+                continue;
+            }
+
+            $variants[$index]['suggested_price'] = $variant['selling_price'] ?? null;
+        }
+
+        return $variants;
+    }
+
+    protected function syncDescriptions(Product $product, array $descriptions): void
+    {
+        foreach ($descriptions as $description) {
+            $languageCode = $description['language_code'] ?? $description['locale'] ?? null;
+
+            if (! $languageCode) {
+                continue;
+            }
+
+            ProductDescription::query()->updateOrCreate(
+                [
+                    'product_id' => $product->id,
+                    'language_code' => $languageCode,
+                ],
+                [
+                    'description' => $description['description'] ?? null,
+                ]
+            );
+        }
+    }
+
+    protected function syncVariants(Product $product, array $variants, bool $isCreate): void
+    {
+        $retainedIds = [];
+
+        foreach ($variants as $index => $variant) {
+            if (($variant['delete'] ?? false) && ! empty($variant['id'])) {
+                $product->variants()->whereKey($variant['id'])->delete();
+                continue;
+            }
+
+            $variantId = $variant['id'] ?? null;
+            $existing = $variantId
+                ? $product->variants()->whereKey($variantId)->first()
+                : null;
+
+            $barcode = trim((string) ($variant['barcode'] ?? ''));
+            if ($barcode === '') {
+                $barcode = $existing?->barcode ?: ('AUTO-' . strtoupper(Str::random(12)));
+            }
+
+            $attributes = [
+                'name' => $variant['name'],
+                'barcode' => $barcode,
+                'cost' => $variant['cost'],
+                'selling_price' => $variant['selling_price'],
+                'weight' => $variant['weight'] ?? null,
+                'suggested_price' => $variant['suggested_price'] ?? null,
+                'company_commission' => $variant['company_commission'] ?? 150.00,
+                'sort_order' => $variant['sort_order'] ?? $index,
+                'is_active' => $variant['is_active'] ?? true,
+                'updated_by' => $variant['updated_by'] ?? $product->supplier_id,
+            ];
+
+            if ($existing) {
+                $existing->fill($attributes);
+                $existing->save();
+                $retainedIds[] = $existing->id;
+                continue;
+            }
+
+            $created = ProductVariant::query()->create([
+                ...$attributes,
+                'uuid' => $variant['uuid'] ?? (string) Str::uuid(),
+                'product_id' => $product->id,
+                'created_by' => $variant['created_by'] ?? $product->supplier_id,
+            ]);
+
+            $retainedIds[] = $created->id;
+        }
+
+        if (! $isCreate) {
+            $product->variants()
+                ->when(
+                    count($retainedIds) > 0,
+                    fn ($query) => $query->whereNotIn('id', $retainedIds),
+                    fn ($query) => $query
+                )
+                ->delete();
+        }
+    }
+
+    protected function syncImages(Product $product, array $images, bool $isCreate): void
+    {
+        foreach ($images as $index => $image) {
+            if (($image['delete'] ?? false) && ! empty($image['id'])) {
+                $product->images()->whereKey($image['id'])->delete();
+                continue;
+            }
+
+            $fileId = $image['file_id'] ?? null;
+
+            if (empty($fileId)) {
+                continue;
+            }
+
+            $attributes = [
+                'file_id' => (int) $fileId,
+                'sort_order' => $image['sort_order'] ?? $index,
+                'is_primary' => $image['is_primary'] ?? ($index === 0 && $product->images()->count() === 0),
+            ];
+
+            if (! empty($image['id'])) {
+                $existing = $product->images()->whereKey($image['id'])->first();
+
+                if ($existing) {
+                    $existing->fill($attributes);
+                    $existing->save();
+                    continue;
                 }
             }
 
-            $relations = ['supplier', 'category', 'descriptions', 'variants', 'images'];
-            if (Schema::hasTable('product_guidelines')) {
-                $relations[] = 'guideline';
-            }
+            ProductImage::query()->create([
+                ...$attributes,
+                'product_id' => $product->id,
+            ]);
+        }
+    }
 
-            return $product->refresh()->load($relations);
-        });
+    protected function defaultRelations(): array
+    {
+        return [
+            'supplier',
+            'category',
+            'descriptions',
+            'variants',
+            'images.file',
+            'guidelineFile',
+        ];
     }
 }
