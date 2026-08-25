@@ -9,12 +9,13 @@ use Illuminate\Support\Str;
 
 class ProductVariant extends Model
 {
-    public $incrementing = false;
+    public $incrementing = true;
 
-    protected $keyType = 'string';
+    protected $keyType = 'int';
 
     protected $fillable = [
         'id',
+        'uuid',
         'product_id',
         'name',
         'barcode',
@@ -45,21 +46,10 @@ class ProductVariant extends Model
     protected static function booted(): void
     {
         static::creating(function (ProductVariant $variant): void {
-            if (empty($variant->id) && static::shouldGenerateUuidPrimaryKey()) {
-                $variant->id = (string) Str::uuid();
+            if (Schema::hasColumn($variant->getTable(), 'uuid') && empty($variant->uuid)) {
+                $variant->uuid = (string) Str::uuid();
             }
         });
-    }
-
-    public static function shouldGenerateUuidPrimaryKey(): bool
-    {
-        if (! Schema::hasTable((new static)->getTable())) {
-            return false;
-        }
-
-        $columnType = Schema::getColumnType((new static)->getTable(), 'id');
-
-        return in_array($columnType, ['string', 'char', 'uuid', 'ulid'], true);
     }
 
     public function product(): BelongsTo

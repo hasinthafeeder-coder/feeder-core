@@ -9,6 +9,7 @@ use Feeder\Core\Models\ProductGuideline;
 use Feeder\Core\Models\ProductImage;
 use Feeder\Core\Models\ProductVariant;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class ProductService
 {
@@ -59,20 +60,25 @@ class ProductService
             ]);
 
             foreach ($descriptions as $description) {
+               $languageCode = $description['language_code'] ?? $description['locale'] ?? null;
+
+               if (! $languageCode) {
+                   continue;
+               }
+
                ProductDescription::query()->create([
                    'product_id' => $product->id,
-                   'locale' => $description['locale'],
+                   'language_code' => $languageCode,
                    'description' => $description['description'] ?? null,
-                   'created_by' => $description['created_by'] ?? $product->supplier_id,
-                   'updated_by' => $description['updated_by'] ?? $product->supplier_id,
                ]);
             }
 
             foreach ($variants as $index => $variant) {
                ProductVariant::query()->create([
+                   'uuid' => (string) \Illuminate\Support\Str::uuid(),
                    'product_id' => $product->id,
                    'name' => $variant['name'],
-                   'barcode' => $variant['barcode'] ?? null,
+                   'barcode' => (string) ($variant['barcode'] ?? ''),
                    'cost' => $variant['cost'],
                    'selling_price' => $variant['selling_price'],
                    'weight' => $variant['weight'] ?? null,
@@ -86,22 +92,35 @@ class ProductService
             }
 
             foreach ($images as $index => $image) {
+               $fileId = $image['file_id'] ?? $image['file_uuid'] ?? null;
+               if (! is_numeric($fileId)) {
+                   continue;
+               }
+
                ProductImage::query()->create([
                    'product_id' => $product->id,
-                   'file_uuid' => $image['file_uuid'],
+                   'file_id' => (int) $fileId,
                    'sort_order' => $image['sort_order'] ?? $index,
                    'is_primary' => $image['is_primary'] ?? ($index === 0),
                ]);
             }
 
-            if ($guideline) {
-               ProductGuideline::query()->create([
-                   'product_id' => $product->id,
-                   'file_uuid' => $guideline['file_uuid'],
-               ]);
+            if ($guideline && Schema::hasTable('product_guidelines')) {
+               $fileId = $guideline['file_id'] ?? $guideline['file_uuid'] ?? null;
+               if (is_numeric($fileId)) {
+                   ProductGuideline::query()->create([
+                       'product_id' => $product->id,
+                       'file_id' => (int) $fileId,
+                   ]);
+               }
             }
 
-            return $product->load(['supplier', 'category', 'descriptions', 'variants', 'images', 'guideline']);
+            $relations = ['supplier', 'category', 'descriptions', 'variants', 'images'];
+            if (Schema::hasTable('product_guidelines')) {
+                $relations[] = 'guideline';
+            }
+
+            return $product->load($relations);
         });
     }
 
@@ -126,18 +145,16 @@ class ProductService
             $product->save();
 
             foreach ($descriptions as $description) {
-                $locale = $description['locale'] ?? null;
+                $languageCode = $description['language_code'] ?? $description['locale'] ?? null;
 
-                if (! $locale) {
+                if (! $languageCode) {
                     continue;
                 }
 
                 ProductDescription::query()->updateOrCreate(
-                    ['product_id' => $product->id, 'locale' => $locale],
+                    ['product_id' => $product->id, 'language_code' => $languageCode],
                     [
                         'description' => $description['description'] ?? null,
-                        'created_by' => $description['created_by'] ?? $product->supplier_id,
-                        'updated_by' => $description['updated_by'] ?? $product->supplier_id,
                     ]
                 );
             }
@@ -177,7 +194,7 @@ class ProductService
                 $newVariantAttributes = [
                     'product_id' => $product->id,
                     'name' => $attributes['name'],
-                    'barcode' => $attributes['barcode'],
+                    'barcode' => (string) ($attributes['barcode'] ?? ''),
                     'cost' => $attributes['cost'],
                     'selling_price' => $attributes['selling_price'],
                     'weight' => $attributes['weight'],
@@ -188,6 +205,10 @@ class ProductService
                     'created_by' => $variant['created_by'] ?? $product->supplier_id,
                     'updated_by' => $attributes['updated_by'],
                 ];
+
+                if (Schema::hasColumn('product_variants', 'uuid') && empty($newVariantAttributes['uuid'] ?? null)) {
+                    $newVariantAttributes['uuid'] = (string) \Illuminate\Support\Str::uuid();
+                }
 
                 if ($variantId) {
                     $newVariantAttributes['id'] = $variantId;
@@ -243,7 +264,12 @@ class ProductService
                 }
             }
 
-            return $product->refresh()->load(['supplier', 'category', 'descriptions', 'variants', 'images', 'guideline']);
+            $relations = ['supplier', 'category', 'descriptions', 'variants', 'images'];
+            if (Schema::hasTable('product_guidelines')) {
+                $relations[] = 'guideline';
+            }
+
+            return $product->refresh()->load($relations);
         });
     }
 }

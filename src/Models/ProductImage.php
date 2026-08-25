@@ -9,14 +9,14 @@ use Illuminate\Support\Str;
 
 class ProductImage extends Model
 {
-    public $incrementing = false;
+    public $incrementing = true;
 
-    protected $keyType = 'string';
+    protected $keyType = 'int';
 
     protected $fillable = [
         'id',
         'product_id',
-        'file_uuid',
+        'file_id',
         'sort_order',
         'is_primary',
     ];

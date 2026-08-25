@@ -9,17 +9,15 @@ use Illuminate\Support\Str;
 
 class ProductDescription extends Model
 {
-    public $incrementing = false;
+    public $incrementing = true;
 
-    protected $keyType = 'string';
+    protected $keyType = 'int';
 
     protected $fillable = [
         'id',
         'product_id',
-        'locale',
+        'language_code',
         'description',
-        'created_by',
-        'updated_by',
     ];
 
     protected static function booted(): void

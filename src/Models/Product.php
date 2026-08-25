@@ -32,6 +32,7 @@ class Product extends Model
        'system_visible',
        'web_visible',
        'price_locked',
+       'guideline_file_id',
        'created_by',
        'updated_by',
     ];
@@ -102,6 +103,10 @@ class Product extends Model
 
     public function guideline(): HasOne
     {
+       if (! Schema::hasTable('product_guidelines')) {
+           return $this->hasOne(ProductGuideline::class)->whereRaw('1 = 0');
+       }
+
        return $this->hasOne(ProductGuideline::class);
     }
 
