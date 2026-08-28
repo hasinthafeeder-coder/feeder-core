@@ -10,7 +10,6 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 use Feeder\Core\Enums\UserStatus;
-use Feeder\Core\Enums\UserType;
 use Feeder\Core\Authorization\Traits\HasPermissions;
 
 class User extends Authenticatable
@@ -67,7 +66,12 @@ class User extends Authenticatable
 
     public function isReseller(): bool
     {
-        return $this->user_type === UserType::OWNER->value;
+        return $this->company?->isResellerCompany() ?? false;
+    }
+
+    public function isSupplier(): bool
+    {
+        return $this->company?->isSupplierCompany() ?? false;
     }
 
     public function getRouteKeyName(): string

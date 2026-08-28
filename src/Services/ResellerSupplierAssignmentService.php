@@ -6,6 +6,7 @@ use Feeder\Core\Enums\CompanyStatus;
 use Feeder\Core\Enums\PortalCode;
 use Feeder\Core\Enums\UserStatus;
 use Feeder\Core\Enums\UserType;
+use Feeder\Core\Models\Company;
 use Feeder\Core\Models\ResellerSupplierAssignment;
 use Feeder\Core\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -18,6 +19,10 @@ use Illuminate\Validation\ValidationException;
 class ResellerSupplierAssignmentService
 {
     public const SELECT_ALL = 'all';
+
+    public function __construct(
+        private readonly ResellerMarketAccessService $marketAccessService,
+    ) {}
 
     /**
      * @return Collection<int, User>
@@ -37,9 +42,18 @@ class ResellerSupplierAssignmentService
      */
     public function listAssignableSuppliers(User $reseller): Collection
     {
+        $allowedMarketIds = $this->resellerAllowedMarketIds($reseller);
+
         return $this->eligibleSupplierQuery()
             ->whereNotIn('id', $this->assignedSupplierIdQuery($reseller))
-            ->with('company')
+            ->when(
+                $allowedMarketIds !== [],
+                fn (Builder $query) => $query->whereHas('company', function (Builder $companyQuery) use ($allowedMarketIds) {
+                    $companyQuery->whereIn('operation_market_id', $allowedMarketIds);
+                }),
+                fn (Builder $query) => $query->whereRaw('1 = 0')
+            )
+            ->with('company.operationMarket')
             ->orderBy('users.id')
             ->get();
     }
@@ -112,6 +126,8 @@ class ResellerSupplierAssignmentService
             ]);
         }
 
+        $this->assertSupplierMarketAccess($reseller, $supplier);
+
         try {
             return ResellerSupplierAssignment::query()->create([
                 'reseller_id' => $reseller->id,
@@ -170,5 +186,50 @@ class ResellerSupplierAssignmentService
         return ResellerSupplierAssignment::query()
             ->select('supplier_id')
             ->where('reseller_id', $reseller->id);
+    }
+
+    protected function assertSupplierMarketAccess(User $reseller, User $supplier): void
+    {
+        $resellerCompany = $this->resolveResellerCompany($reseller);
+        $supplierCompany = $supplier->company;
+
+        if (! $supplierCompany || $supplierCompany->operation_market_id === null) {
+            throw ValidationException::withMessages([
+                'supplier' => 'The selected supplier does not have an operation market configured.',
+            ]);
+        }
+
+        if (! $this->marketAccessService->hasMarketAccess($resellerCompany, (int) $supplierCompany->operation_market_id)) {
+            throw ValidationException::withMessages([
+                'supplier' => 'This supplier cannot be assigned because the reseller does not have access to the supplier operation market.',
+            ]);
+        }
+    }
+
+    protected function resolveResellerCompany(User $reseller): Company
+    {
+        $company = $reseller->company;
+
+        if (! $company || ! $company->isResellerCompany()) {
+            throw ValidationException::withMessages([
+                'reseller' => 'The selected user is not a reseller company owner.',
+            ]);
+        }
+
+        return $company;
+    }
+
+    /**
+     * @return list<int>
+     */
+    protected function resellerAllowedMarketIds(User $reseller): array
+    {
+        $company = $reseller->company;
+
+        if (! $company) {
+            return [];
+        }
+
+        return $company->allowedMarkets()->pluck('markets.id')->map(fn ($id) => (int) $id)->all();
     }
 }

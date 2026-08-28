@@ -23,6 +23,7 @@ class Product extends Model
         'uuid',
         'supplier_id',
         'category_id',
+        'market_id',
         'name',
         'slug',
         'status',
@@ -68,6 +69,11 @@ class Product extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(ProductCategory::class, 'category_id');
+    }
+
+    public function market(): BelongsTo
+    {
+        return $this->belongsTo(Market::class);
     }
 
     public function descriptions(): HasMany

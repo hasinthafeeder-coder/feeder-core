@@ -4,6 +4,7 @@ namespace Feeder\Core\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Feeder\Core\Contracts\PermissionServiceInterface;
+use Feeder\Core\Services\CountryRegistrationRuleService;
 use Feeder\Core\Services\PermissionService;
 use Feeder\Core\Authorization\Services\MenuService;
 use Illuminate\Support\Facades\Gate;
@@ -19,6 +20,8 @@ class FeederCoreServiceProvider extends ServiceProvider
             PermissionServiceInterface::class,
             PermissionService::class
         );
+
+        $this->app->singleton(CountryRegistrationRuleService::class);
     }
 
     public function boot(): void

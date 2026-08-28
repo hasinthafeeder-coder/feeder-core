@@ -4,14 +4,20 @@ namespace Feeder\Core\Services;
 
 use Feeder\Core\Enums\ProductStatus;
 use Feeder\Core\Models\Product;
+use Feeder\Core\Models\User;
 use Feeder\Core\Models\ProductDescription;
 use Feeder\Core\Models\ProductImage;
 use Feeder\Core\Models\ProductVariant;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class ProductService
 {
+    public function __construct(
+        protected MarketDefaultCompanyCommissionService $marketCommissionService,
+    ) {
+    }
     protected function generateUniqueSlug(string $value, ?int $ignoreId = null): string
     {
         $base = trim((string) Str::slug($value ?: 'product'));
@@ -62,14 +68,19 @@ class ProductService
         ?array $guideline = null
     ): Product {
         return DB::transaction(function () use ($productData, $descriptions, $variants, $images, $guideline) {
+            unset($productData['market_id']);
+
             $status = $productData['status'] instanceof ProductStatus
                 ? $productData['status']
                 : ProductStatus::from((string) ($productData['status'] ?? ProductStatus::DRAFT->value));
+
+            $marketId = $this->resolveSupplierOperationMarketId((int) $productData['supplier_id']);
 
             $product = Product::query()->create([
                 'uuid' => $productData['uuid'] ?? (string) Str::uuid(),
                 'supplier_id' => $productData['supplier_id'],
                 'category_id' => $productData['category_id'],
+                'market_id' => $marketId,
                 'name' => $productData['name'],
                 'slug' => $this->generateUniqueSlug($productData['slug'] ?? $productData['name']),
                 'status' => $status,
@@ -105,7 +116,7 @@ class ProductService
         ?array $guideline = null
     ): Product {
         return DB::transaction(function () use ($product, $productData, $descriptions, $variants, $images, $guideline) {
-            unset($productData['supplier_id'], $productData['created_by'], $productData['uuid']);
+            unset($productData['supplier_id'], $productData['created_by'], $productData['uuid'], $productData['market_id']);
 
             $status = array_key_exists('status', $productData)
                 ? ($productData['status'] instanceof ProductStatus
@@ -256,7 +267,7 @@ class ProductService
                 'selling_price' => $variant['selling_price'],
                 'weight' => $variant['weight'] ?? null,
                 'suggested_price' => $variant['suggested_price'] ?? null,
-                'company_commission' => $variant['company_commission'] ?? 150.00,
+                'company_commission' => $this->resolveVariantCompanyCommission($product, $variant, $existing),
                 'sort_order' => $variant['sort_order'] ?? $index,
                 'is_active' => $variant['is_active'] ?? true,
                 'updated_by' => $variant['updated_by'] ?? $product->updated_by ?? $product->supplier_id,
@@ -332,10 +343,52 @@ class ProductService
         return [
             'supplier.company',
             'category',
+            'market',
             'descriptions',
             'variants',
             'images.file',
             'guidelineFile',
         ];
+    }
+
+    protected function resolveVariantCompanyCommission(Product $product, array $variant, ?ProductVariant $existing): string
+    {
+        if (array_key_exists('company_commission', $variant)
+            && $variant['company_commission'] !== null
+            && $variant['company_commission'] !== '') {
+            return $this->marketCommissionService->normalizeMoneyValue($variant['company_commission']);
+        }
+
+        if ($existing !== null) {
+            return number_format((float) $existing->company_commission, 2, '.', '');
+        }
+
+        $product->loadMissing('market.currency');
+
+        if ($product->market === null) {
+            throw ValidationException::withMessages([
+                'market' => 'Product market is required to resolve default company commission.',
+            ]);
+        }
+
+        return $this->marketCommissionService->getDefaultCompanyCommission($product->market);
+    }
+
+    protected function resolveSupplierOperationMarketId(int $supplierId): int
+    {
+        /** @var User|null $supplier */
+        $supplier = User::query()
+            ->with('company')
+            ->find($supplierId);
+
+        $operationMarketId = $supplier?->company?->operation_market_id;
+
+        if ($operationMarketId === null) {
+            throw ValidationException::withMessages([
+                'supplier' => 'The supplier operation market is not configured.',
+            ]);
+        }
+
+        return (int) $operationMarketId;
     }
 }
