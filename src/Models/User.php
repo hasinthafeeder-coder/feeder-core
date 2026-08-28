@@ -86,6 +86,44 @@ class User extends Authenticatable
         );
     }
 
+    public function supplierAssignments(): HasMany
+    {
+        return $this->hasMany(ResellerSupplierAssignment::class, 'reseller_id');
+    }
+
+    public function resellerAssignments(): HasMany
+    {
+        return $this->hasMany(ResellerSupplierAssignment::class, 'supplier_id');
+    }
+
+    /**
+     * Suppliers assigned to this reseller for product availability.
+     */
+    public function assignedSuppliers(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            self::class,
+            'reseller_supplier_assignments',
+            'reseller_id',
+            'supplier_id'
+        )->withPivot(['id', 'uuid', 'assigned_by'])
+            ->withTimestamps();
+    }
+
+    /**
+     * Resellers this supplier is assigned to.
+     */
+    public function assignedResellers(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            self::class,
+            'reseller_supplier_assignments',
+            'supplier_id',
+            'reseller_id'
+        )->withPivot(['id', 'uuid', 'assigned_by'])
+            ->withTimestamps();
+    }
+
     protected function casts(): array
     {
         return [

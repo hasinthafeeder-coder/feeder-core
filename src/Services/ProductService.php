@@ -45,6 +45,9 @@ class ProductService
             'draft' => ($isCreate || $currentStatus === null || $currentStatus === ProductStatus::DRAFT)
                 ? ProductStatus::DRAFT
                 : $currentStatus,
+            'save', 'update' => $isCreate
+                ? ProductStatus::DRAFT
+                : ($currentStatus ?? ProductStatus::DRAFT),
             default => $isCreate
                 ? ProductStatus::DRAFT
                 : ($currentStatus ?? ProductStatus::DRAFT),
@@ -102,6 +105,8 @@ class ProductService
         ?array $guideline = null
     ): Product {
         return DB::transaction(function () use ($product, $productData, $descriptions, $variants, $images, $guideline) {
+            unset($productData['supplier_id'], $productData['created_by'], $productData['uuid']);
+
             $status = array_key_exists('status', $productData)
                 ? ($productData['status'] instanceof ProductStatus
                     ? $productData['status']
@@ -115,7 +120,7 @@ class ProductService
                 'system_visible' => $productData['system_visible'] ?? $product->system_visible,
                 'web_visible' => $productData['web_visible'] ?? $product->web_visible,
                 'price_locked' => $productData['price_locked'] ?? $product->price_locked,
-                'updated_by' => $productData['updated_by'] ?? $product->supplier_id,
+                'updated_by' => $productData['updated_by'] ?? $product->updated_by ?? $product->supplier_id,
             ];
 
             if (array_key_exists('name', $productData) && $productData['name'] !== $product->name) {
@@ -150,7 +155,7 @@ class ProductService
 
     public function deactivateProduct(Product $product, ?int $updatedBy = null): Product
     {
-        if ($product->status !== ProductStatus::ACTIVE) {
+        if ($product->status !== ProductStatus::ACTIVE && $product->status !== ProductStatus::DRAFT) {
             return $product;
         }
 
@@ -254,7 +259,7 @@ class ProductService
                 'company_commission' => $variant['company_commission'] ?? 150.00,
                 'sort_order' => $variant['sort_order'] ?? $index,
                 'is_active' => $variant['is_active'] ?? true,
-                'updated_by' => $variant['updated_by'] ?? $product->supplier_id,
+                'updated_by' => $variant['updated_by'] ?? $product->updated_by ?? $product->supplier_id,
             ];
 
             if ($existing) {
@@ -325,7 +330,7 @@ class ProductService
     protected function defaultRelations(): array
     {
         return [
-            'supplier',
+            'supplier.company',
             'category',
             'descriptions',
             'variants',

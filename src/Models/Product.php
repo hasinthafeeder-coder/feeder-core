@@ -95,6 +95,18 @@ class Product extends Model
         return $query->where('supplier_id', $supplierId);
     }
 
+    /**
+     * Products whose supplier is assigned to the given reseller.
+     */
+    public function scopeForReseller(Builder $query, int $resellerId): Builder
+    {
+        return $query->whereIn('supplier_id', function ($subquery) use ($resellerId) {
+            $subquery->select('supplier_id')
+                ->from('reseller_supplier_assignments')
+                ->where('reseller_id', $resellerId);
+        });
+    }
+
     public function descriptionFor(string $languageCode): ?string
     {
         return $this->descriptions
@@ -110,5 +122,10 @@ class Product extends Model
     public function primaryImage(): ?ProductImage
     {
         return $this->images->firstWhere('is_primary', true) ?? $this->images->first();
+    }
+
+    public function supplierCompanyName(): string
+    {
+        return $this->supplier?->company?->name ?: '—';
     }
 }
