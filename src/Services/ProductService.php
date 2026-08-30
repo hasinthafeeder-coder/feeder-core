@@ -15,7 +15,7 @@ use Illuminate\Validation\ValidationException;
 class ProductService
 {
     public function __construct(
-        protected MarketDefaultCompanyCommissionService $marketCommissionService,
+        protected CompanyCommissionService $companyCommissionService,
     ) {
     }
     protected function generateUniqueSlug(string $value, ?int $ignoreId = null): string
@@ -353,25 +353,15 @@ class ProductService
 
     protected function resolveVariantCompanyCommission(Product $product, array $variant, ?ProductVariant $existing): string
     {
-        if (array_key_exists('company_commission', $variant)
-            && $variant['company_commission'] !== null
-            && $variant['company_commission'] !== '') {
-            return $this->marketCommissionService->normalizeMoneyValue($variant['company_commission']);
+        $explicitAmount = array_key_exists('company_commission', $variant)
+            ? $variant['company_commission']
+            : null;
+
+        if ($explicitAmount !== null && $explicitAmount !== '') {
+            return $this->companyCommissionService->resolveCompanyCommission($product, null, $explicitAmount);
         }
 
-        if ($existing !== null) {
-            return number_format((float) $existing->company_commission, 2, '.', '');
-        }
-
-        $product->loadMissing('market.currency');
-
-        if ($product->market === null) {
-            throw ValidationException::withMessages([
-                'market' => 'Product market is required to resolve default company commission.',
-            ]);
-        }
-
-        return $this->marketCommissionService->getDefaultCompanyCommission($product->market);
+        return $this->companyCommissionService->resolveCompanyCommission($product, $existing);
     }
 
     protected function resolveSupplierOperationMarketId(int $supplierId): int

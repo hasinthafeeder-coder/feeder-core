@@ -128,6 +128,11 @@ class User extends Authenticatable
             ->withTimestamps();
     }
 
+    public function marketServiceChargeOverrides(): HasMany
+    {
+        return $this->hasMany(ResellerMarketServiceChargeOverride::class);
+    }
+
     protected function casts(): array
     {
         return [
