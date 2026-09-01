@@ -36,6 +36,24 @@ class SupplierMenu
                 )
         );
 
+        $menu->addSection(
+            MenuSection::make('INVENTORY')
+                ->addItem(
+                    MenuItem::make('GRNs')
+                        ->icon('inventory')
+                        ->permission('grns.view')
+                        ->children([
+                            MenuItem::make('All GRNs')
+                                ->route('grns.index')
+                                ->permission('grns.view'),
+
+                            MenuItem::make('Create GRN')
+                                ->route('grns.create')
+                                ->permission('grns.create'),
+                        ])
+                )
+        );
+
         return $menu;
     }
 }
