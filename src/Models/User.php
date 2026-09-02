@@ -74,6 +74,20 @@ class User extends Authenticatable
         return $this->company?->isSupplierCompany() ?? false;
     }
 
+    public function isProSupplier(): bool
+    {
+        if (! $this->isSupplier()) {
+            return false;
+        }
+
+        return $this->company?->isProSupplier() ?? false;
+    }
+
+    public function getIsProAttribute(): bool
+    {
+        return $this->isProSupplier();
+    }
+
     public function getRouteKeyName(): string
     {
         return 'uuid';

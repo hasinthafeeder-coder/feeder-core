@@ -60,4 +60,35 @@ class CurrencyDisplay
 
         return $currency->iso_code.$symbol;
     }
+
+    public static function formatProductVariantListPrice(
+        ?Currency $currency,
+        bool $priceLocked,
+        float|string|null $sellingPrice,
+        float|string|null $suggestedPrice,
+        float|string|null $suggestedPriceMin,
+        float|string|null $suggestedPriceMax,
+    ): string {
+        if ($priceLocked) {
+            return self::formatAmount($currency, $sellingPrice);
+        }
+
+        if ($suggestedPriceMin !== null && $suggestedPriceMax !== null) {
+            if ((float) $suggestedPriceMin === (float) $suggestedPriceMax) {
+                return self::formatAmount($currency, $suggestedPriceMin);
+            }
+
+            return sprintf(
+                '%s — %s',
+                self::formatAmount($currency, $suggestedPriceMin),
+                self::formatAmount($currency, $suggestedPriceMax)
+            );
+        }
+
+        if ($suggestedPrice !== null) {
+            return self::formatAmount($currency, $suggestedPrice);
+        }
+
+        return self::formatAmount($currency, $sellingPrice);
+    }
 }

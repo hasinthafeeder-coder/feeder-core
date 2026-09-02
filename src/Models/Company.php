@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 use Feeder\Core\Enums\CompanyStatus;
 use Feeder\Core\Enums\PortalCode;
+use Feeder\Core\Enums\SupplierType;
 use Feeder\Core\Services\SupplierOperationMarketService;
 
 class Company extends Model
@@ -47,6 +48,11 @@ class Company extends Model
         $this->loadMissing('portal');
 
         return $this->portal?->code === PortalCode::RESELLER->value;
+    }
+
+    public function isProSupplier(): bool
+    {
+        return $this->supplier_type === SupplierType::PRO;
     }
 
     public function owner(): BelongsTo
@@ -109,6 +115,7 @@ class Company extends Model
     {
         return [
             'status' => CompanyStatus::class,
+            'supplier_type' => SupplierType::class,
             'is_active' => 'boolean',
         ];
     }

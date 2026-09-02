@@ -118,6 +118,10 @@ class AdminMenu
                             MenuItem::make('Product Categories')
                                 ->route('product-categories.index')
                                 ->permission('product_categories.view'),
+
+                            MenuItem::make('Stock')
+                                ->route('stock.index')
+                                ->permission('stock.view'),
                         ])
                 )
         );

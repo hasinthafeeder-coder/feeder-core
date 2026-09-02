@@ -204,16 +204,17 @@ class ProductService
 
     protected function applyPriceLockToVariants(array $variants, bool $priceLocked): array
     {
-        if (! $priceLocked) {
-            return $variants;
-        }
-
         foreach ($variants as $index => $variant) {
             if (($variant['delete'] ?? false) === true) {
                 continue;
             }
 
-            $variants[$index]['suggested_price'] = $variant['selling_price'] ?? null;
+            if ($priceLocked) {
+                $variants[$index]['suggested_price_min'] = null;
+                $variants[$index]['suggested_price_max'] = null;
+            } else {
+                $variants[$index]['suggested_price'] = null;
+            }
         }
 
         return $variants;
@@ -267,6 +268,8 @@ class ProductService
                 'selling_price' => $variant['selling_price'],
                 'weight' => $variant['weight'] ?? null,
                 'suggested_price' => $variant['suggested_price'] ?? null,
+                'suggested_price_min' => $variant['suggested_price_min'] ?? null,
+                'suggested_price_max' => $variant['suggested_price_max'] ?? null,
                 'company_commission' => $this->resolveVariantCompanyCommission($product, $variant, $existing),
                 'sort_order' => $variant['sort_order'] ?? $index,
                 'is_active' => $variant['is_active'] ?? true,

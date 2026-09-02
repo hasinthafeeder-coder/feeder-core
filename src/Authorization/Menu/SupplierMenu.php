@@ -52,6 +52,12 @@ class SupplierMenu
                                 ->permission('grns.create'),
                         ])
                 )
+                ->addItem(
+                    MenuItem::make('Stock')
+                        ->icon('warehouse')
+                        ->route('stock.index')
+                        ->permission('stock.view')
+                )
         );
 
         return $menu;
