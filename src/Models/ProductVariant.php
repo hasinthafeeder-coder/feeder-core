@@ -2,6 +2,7 @@
 
 namespace Feeder\Core\Models;
 
+use Feeder\Core\Support\ProductVariantBarcodeGenerator;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -54,7 +55,7 @@ class ProductVariant extends Model
             }
 
             if ($variant->barcode === null || $variant->barcode === '') {
-                $variant->barcode = 'AUTO-' . strtoupper(Str::random(12));
+                $variant->barcode = ProductVariantBarcodeGenerator::generateUnique();
             }
         });
     }

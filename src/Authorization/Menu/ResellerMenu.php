@@ -59,13 +59,8 @@ class ResellerMenu
                 ->addItem(
                     MenuItem::make('Products')
                         ->icon('inventory_2')
+                        ->route('products.index')
                         ->permission('products.view')
-                        ->children([
-                            MenuItem::make('All Products')
-                                ->route('products.index')
-                                ->permission('products.view'),
-
-                        ])
                 )
         );
 

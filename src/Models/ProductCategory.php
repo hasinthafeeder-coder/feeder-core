@@ -60,6 +60,17 @@ class ProductCategory extends Model
     }
 
     /**
+     * Products assigned to this category.
+     */
+    public function products(): HasMany
+    {
+        return $this->hasMany(
+            Product::class,
+            'category_id'
+        );
+    }
+
+    /**
      * User who created the category.
      */
     public function createdBy(): BelongsTo

@@ -8,6 +8,7 @@ use Feeder\Core\Models\User;
 use Feeder\Core\Models\ProductDescription;
 use Feeder\Core\Models\ProductImage;
 use Feeder\Core\Models\ProductVariant;
+use Feeder\Core\Support\ProductVariantBarcodeGenerator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -258,7 +259,9 @@ class ProductService
 
             $barcode = trim((string) ($variant['barcode'] ?? ''));
             if ($barcode === '') {
-                $barcode = $existing?->barcode ?: ('AUTO-' . strtoupper(Str::random(12)));
+                $barcode = $existing?->barcode ?: ProductVariantBarcodeGenerator::generateUnique(
+                    $existing?->id
+                );
             }
 
             $attributes = [

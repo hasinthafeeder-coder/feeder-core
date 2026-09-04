@@ -4,6 +4,7 @@ namespace Feeder\Core\Services;
 
 use Feeder\Core\Contracts\Product\ProductMarketLanguageDefinition;
 use Feeder\Core\Models\Market;
+use Feeder\Core\Models\Product;
 use Feeder\Core\Product\MarketLanguages\FallbackProductLanguages;
 use Feeder\Core\Product\MarketLanguages\MalaysiaProductLanguages;
 use Feeder\Core\Product\MarketLanguages\SriLankaProductLanguages;
@@ -97,6 +98,23 @@ class ProductMarketLanguageService
                 ]);
             }
         }
+    }
+
+    public function resolveDescriptionForDisplay(Product $product): ?string
+    {
+        if (! $product->relationLoaded('descriptions')) {
+            $product->load('descriptions');
+        }
+
+        foreach ($this->languageCodesForMarket($product->market) as $languageCode) {
+            $description = $product->descriptionFor($languageCode);
+
+            if (filled($description)) {
+                return $description;
+            }
+        }
+
+        return null;
     }
 
     protected function resolveDefinition(Market|string|null $market): ProductMarketLanguageDefinition
