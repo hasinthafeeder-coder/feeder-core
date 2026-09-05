@@ -86,6 +86,27 @@ class ResellerMenu
 
         /*
         |--------------------------------------------------------------------------
+        | CALL CENTER (O1.1 UI preview)
+        | Permission is intentionally omitted so the screens remain visible
+        | for UI review. Existing permission filtering is unchanged.
+        | Wire to the permission engine in O1.2/O1.3.
+        |--------------------------------------------------------------------------
+        */
+
+        $menu->addSection(
+            MenuSection::make('CALL CENTER')
+                ->addItem(
+                    MenuItem::make('Call Center')
+                        ->icon('headset_mic')
+                        ->children([
+                            MenuItem::make('Agents')
+                                ->route('ui.call-center.agents.index'),
+                        ])
+                )
+        );
+
+        /*
+        |--------------------------------------------------------------------------
         | CUSTOMERS
         |--------------------------------------------------------------------------
         */
