@@ -15,4 +15,13 @@ class UserProfile extends Model
     {
         return $this->belongsTo(User::class);
     }
+
+    protected function casts(): array
+    {
+        return [
+            // Current Call Center Agent commission configuration per eligible delivered order.
+            // Not historical earnings / ledger totals (those belong to future Order/Finance).
+            'agent_commission_per_order' => 'decimal:2',
+        ];
+    }
 }
