@@ -108,6 +108,14 @@ class ResellerSupplierAssignmentService
         return $this->assignedSupplierIdQuery($reseller)->pluck('supplier_id');
     }
 
+    public function isSupplierAssigned(int $resellerId, int $supplierId): bool
+    {
+        return ResellerSupplierAssignment::query()
+            ->where('reseller_id', $resellerId)
+            ->where('supplier_id', $supplierId)
+            ->exists();
+    }
+
     protected function assignOne(User $reseller, string $supplierUuid, ?User $assignedBy): ResellerSupplierAssignment
     {
         $supplier = $this->eligibleSupplierQuery()
