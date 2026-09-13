@@ -106,59 +106,9 @@ class ResellerMenu
 
         /*
         |--------------------------------------------------------------------------
-        | CUSTOMERS
-        |--------------------------------------------------------------------------
-        */
-
-        $menu->addSection(
-            MenuSection::make('CUSTOMERS')
-                ->addItem(
-                    MenuItem::make('Customers')
-                        ->icon('groups')
-                        ->route('customers.index')
-                        ->permission('customers.view')
-                )
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | PAYOUTS
-        |--------------------------------------------------------------------------
-        */
-
-        $menu->addSection(
-            MenuSection::make('PAYOUTS')
-                ->addItem(
-                    MenuItem::make('Payouts')
-                        ->icon('account_balance_wallet')
-                        ->permission('payouts.view')
-                        ->children([
-                            MenuItem::make('Payout History')
-                                ->route('payouts.index')
-                                ->permission('payouts.view'),
-                        ])
-                )
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | REPORTS
-        |--------------------------------------------------------------------------
-        */
-
-        $menu->addSection(
-            MenuSection::make('REPORTS')
-                ->addItem(
-                    MenuItem::make('Reports')
-                        ->icon('bar_chart')
-                        ->route('reports.index')
-                        ->permission('reports.view')
-                )
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | PROFILE
+        | ACCOUNT
+        | Customers / Payouts / Reports menu entries are omitted until their
+        | reseller portal routes and UI are implemented.
         |--------------------------------------------------------------------------
         */
 
@@ -167,8 +117,7 @@ class ResellerMenu
                 ->addItem(
                     MenuItem::make('My Profile')
                         ->icon('account_circle')
-                        ->route('profile.index')
-                        ->permission('profile.view')
+                        ->route('profile.edit')
                 )
         );
 

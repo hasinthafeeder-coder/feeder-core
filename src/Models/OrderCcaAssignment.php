@@ -2,6 +2,7 @@
 
 namespace Feeder\Core\Models;
 
+use Feeder\Core\Enums\OrderCcaAssignmentOrigin;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
@@ -17,6 +18,7 @@ class OrderCcaAssignment extends Model
         'order_id',
         'cca_id',
         'assigned_by',
+        'origin',
         'assigned_at',
         'unassigned_at',
         'note',
@@ -25,6 +27,7 @@ class OrderCcaAssignment extends Model
     protected function casts(): array
     {
         return [
+            'origin' => OrderCcaAssignmentOrigin::class,
             'assigned_at' => 'datetime',
             'unassigned_at' => 'datetime',
         ];

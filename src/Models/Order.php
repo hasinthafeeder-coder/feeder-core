@@ -2,6 +2,7 @@
 
 namespace Feeder\Core\Models;
 
+use Feeder\Core\Enums\OrderAssignmentState;
 use Feeder\Core\Enums\OrderSource;
 use Feeder\Core\Enums\OrderStatus;
 use Illuminate\Database\Eloquent\Builder;
@@ -31,6 +32,7 @@ class Order extends Model
         'supplier_id',
         'customer_id',
         'cca_id',
+        'available_in_pool',
         'customer_name_snapshot',
         'primary_phone_snapshot',
         'secondary_phone_snapshot',
@@ -67,6 +69,7 @@ class Order extends Model
         return [
             'source' => OrderSource::class,
             'status' => OrderStatus::class,
+            'available_in_pool' => 'boolean',
             'items_subtotal' => 'decimal:2',
             'discount_amount' => 'decimal:2',
             'courier_fee_amount' => 'decimal:2',
@@ -101,6 +104,36 @@ class Order extends Model
     public function isCancelled(): bool
     {
         return $this->status === OrderStatus::CANCELLED;
+    }
+
+    public function assignmentState(): OrderAssignmentState
+    {
+        return OrderAssignmentState::fromOrder(
+            $this->cca_id !== null ? (int) $this->cca_id : null,
+            (bool) $this->available_in_pool,
+        );
+    }
+
+    public function isInOrderPool(): bool
+    {
+        return $this->assignmentState() === OrderAssignmentState::POOL;
+    }
+
+    public function scopeAssignmentState(Builder $query, OrderAssignmentState|string $state): Builder
+    {
+        $state = $state instanceof OrderAssignmentState
+            ? $state
+            : OrderAssignmentState::from($state);
+
+        return match ($state) {
+            OrderAssignmentState::ASSIGNED => $query->whereNotNull('cca_id'),
+            OrderAssignmentState::UNASSIGNED => $query
+                ->whereNull('cca_id')
+                ->where('available_in_pool', false),
+            OrderAssignmentState::POOL => $query
+                ->whereNull('cca_id')
+                ->where('available_in_pool', true),
+        };
     }
 
     /**

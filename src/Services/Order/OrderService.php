@@ -35,6 +35,7 @@ class OrderService
      *     reseller_company_id: int,
      *     supplier_id: int,
      *     cca_id?: int|null,
+     *     available_in_pool?: bool,
      *     customer: array{
      *         display_name: string,
      *         primary_country_id: int,
@@ -141,6 +142,14 @@ class OrderService
                 );
             }
 
+            $availableInPool = (bool) ($payload['available_in_pool'] ?? false);
+            $ccaId = ! empty($payload['cca_id']) ? (int) $payload['cca_id'] : null;
+
+            // Invariant: pool membership is only valid while unassigned.
+            if ($ccaId !== null) {
+                $availableInPool = false;
+            }
+
             $order = Order::query()->create([
                 'source' => $source,
                 'status' => OrderStatus::PENDING,
@@ -152,7 +161,8 @@ class OrderService
                 'reseller_company_id' => (int) $payload['reseller_company_id'],
                 'supplier_id' => (int) $payload['supplier_id'],
                 'customer_id' => $customer->id,
-                'cca_id' => $payload['cca_id'] ?? null,
+                'cca_id' => $ccaId,
+                'available_in_pool' => $availableInPool,
                 'customer_name_snapshot' => $payload['customer']['display_name'],
                 'primary_phone_snapshot' => (string) $payload['customer']['primary_phone'],
                 'secondary_phone_snapshot' => $payload['customer']['secondary_phone'] ?? null,
