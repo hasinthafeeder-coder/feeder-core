@@ -32,18 +32,36 @@ class ResellerMenu
 
         $menu->addSection(
             MenuSection::make('ORDERS')
+                // Title "Orders" is replaced in the reseller layout by ui-sidebar-orders:
+                // New Orders (Create / Import), Call Center, Ongoing, Archived.
                 ->addItem(
                     MenuItem::make('Orders')
                         ->icon('shopping_cart')
                         ->permission('orders.view')
                         ->children([
-                            MenuItem::make('All Orders')
+                            MenuItem::make('New Orders')
+                                ->permission('orders.view')
+                                ->children([
+                                    MenuItem::make('Create Order')
+                                        ->route('orders.create')
+                                        ->permission('orders.create'),
+
+                                    MenuItem::make('Import Order')
+                                        ->route('orders.index')
+                                        ->permission('orders.create'),
+                                ]),
+
+                            MenuItem::make('Call Center Orders')
                                 ->route('orders.index')
                                 ->permission('orders.view'),
 
-                            MenuItem::make('Create Order')
-                                ->route('orders.create')
-                                ->permission('orders.create'),
+                            MenuItem::make('Ongoing Orders')
+                                ->route('orders.index')
+                                ->permission('orders.view'),
+
+                            MenuItem::make('Archived Orders')
+                                ->route('orders.index')
+                                ->permission('orders.view'),
                         ])
                 )
         );

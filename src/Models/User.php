@@ -59,6 +59,11 @@ class User extends Authenticatable
         return $this->hasMany(ReferralRelationship::class, 'parent_user_id');
     }
 
+    public function supplierCourierAccounts(): HasMany
+    {
+        return $this->hasMany(SupplierCourierAccount::class, 'supplier_id');
+    }
+
     public function isMasterReseller(): bool
     {
         return (bool) $this->is_master_reseller;

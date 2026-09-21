@@ -279,6 +279,12 @@ class ProductService
                 'updated_by' => $variant['updated_by'] ?? $product->updated_by ?? $product->supplier_id,
             ];
 
+            // Only persist when explicitly provided so Admin updates without the field
+            // do not reset an existing supplier-configured reorder level to 0.
+            if (array_key_exists('reorder_level', $variant)) {
+                $attributes['reorder_level'] = (int) $variant['reorder_level'];
+            }
+
             if ($existing) {
                 $existing->fill($attributes);
                 $existing->save();

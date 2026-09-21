@@ -8,7 +8,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class PermissionMiddleware
 {
-    public function handle(Request $request,   Closure $next,    string $permission): Response
+    public function handle(Request $request, Closure $next, string $permission): Response
     {
         $user = $request->user();
 
@@ -16,10 +16,21 @@ class PermissionMiddleware
             abort(401);
         }
 
-        if (!$user->hasPermission($permission)) {
+        $required = array_values(array_filter(array_map(
+            static fn (string $slug) => trim($slug),
+            explode('|', $permission),
+        )));
+
+        if ($required === []) {
             abort(403, 'Forbidden: You do not have permission to access this resource.');
         }
 
-        return $next($request);
+        foreach ($required as $slug) {
+            if ($user->hasPermission($slug)) {
+                return $next($request);
+            }
+        }
+
+        abort(403, 'Forbidden: You do not have permission to access this resource.');
     }
 }

@@ -49,6 +49,11 @@ class Courier extends Model
         return $this->hasMany(CourierService::class);
     }
 
+    public function states(): HasMany
+    {
+        return $this->hasMany(CourierState::class);
+    }
+
     public function cities(): HasMany
     {
         return $this->hasMany(CourierCity::class);

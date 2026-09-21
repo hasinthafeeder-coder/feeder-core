@@ -16,17 +16,24 @@ class CourierCity extends Model
     protected $fillable = [
         'uuid',
         'courier_id',
+        'courier_state_id',
+        'external_id',
+        'external_ref_no',
+        'name',
+        'postal_code',
         'district_name',
         'city_name',
         'external_city_code',
         'external_district_code',
         'is_active',
+        'last_synced_at',
     ];
 
     protected function casts(): array
     {
         return [
             'is_active' => 'boolean',
+            'last_synced_at' => 'datetime',
         ];
     }
 
@@ -47,6 +54,11 @@ class CourierCity extends Model
     public function courier(): BelongsTo
     {
         return $this->belongsTo(Courier::class);
+    }
+
+    public function state(): BelongsTo
+    {
+        return $this->belongsTo(CourierState::class, 'courier_state_id');
     }
 
     public function scopeActive(Builder $query): Builder

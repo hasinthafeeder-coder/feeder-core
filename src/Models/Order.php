@@ -5,6 +5,7 @@ namespace Feeder\Core\Models;
 use Feeder\Core\Enums\OrderAssignmentState;
 use Feeder\Core\Enums\OrderSource;
 use Feeder\Core\Enums\OrderStatus;
+use Feeder\Core\Enums\OrderType;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -22,6 +23,7 @@ class Order extends Model
         'uuid',
         'order_number',
         'source',
+        'order_type',
         'status',
         'market_id',
         'currency_id',
@@ -33,6 +35,9 @@ class Order extends Model
         'customer_id',
         'cca_id',
         'available_in_pool',
+        'draft_courier_id',
+        'draft_courier_service_id',
+        'draft_courier_city_id',
         'customer_name_snapshot',
         'primary_phone_snapshot',
         'secondary_phone_snapshot',
@@ -68,6 +73,7 @@ class Order extends Model
     {
         return [
             'source' => OrderSource::class,
+            'order_type' => OrderType::class,
             'status' => OrderStatus::class,
             'available_in_pool' => 'boolean',
             'items_subtotal' => 'decimal:2',
@@ -165,6 +171,10 @@ class Order extends Model
             if ($order->status === null) {
                 $order->status = OrderStatus::PENDING;
             }
+
+            if ($order->order_type === null) {
+                $order->order_type = OrderType::NEW;
+            }
         });
     }
 
@@ -238,6 +248,11 @@ class Order extends Model
         return $this->hasMany(OrderStatusHistory::class);
     }
 
+    public function paymentSubmissions(): HasMany
+    {
+        return $this->hasMany(OrderPaymentSubmission::class)->latest('id');
+    }
+
     public function ccaAssignments(): HasMany
     {
         return $this->hasMany(OrderCcaAssignment::class);
@@ -251,6 +266,21 @@ class Order extends Model
     public function shipment(): HasOne
     {
         return $this->hasOne(Shipment::class);
+    }
+
+    public function draftCourier(): BelongsTo
+    {
+        return $this->belongsTo(Courier::class, 'draft_courier_id');
+    }
+
+    public function draftCourierService(): BelongsTo
+    {
+        return $this->belongsTo(CourierService::class, 'draft_courier_service_id');
+    }
+
+    public function draftCourierCity(): BelongsTo
+    {
+        return $this->belongsTo(CourierCity::class, 'draft_courier_city_id');
     }
 
     public function creator(): BelongsTo

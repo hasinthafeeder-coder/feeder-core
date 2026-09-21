@@ -5,6 +5,7 @@ namespace Feeder\Core\Services\Order;
 use Carbon\CarbonImmutable;
 use Feeder\Core\Enums\OrderSource;
 use Feeder\Core\Enums\OrderStatus;
+use Feeder\Core\Enums\OrderType;
 use Feeder\Core\Exceptions\DuplicateOrderWarningException;
 use Feeder\Core\Models\Currency;
 use Feeder\Core\Models\Market;
@@ -20,10 +21,13 @@ class OrderService
 {
     public function __construct(
         private readonly CustomerIdentityService $customerIdentityService,
+        private readonly CustomerBanService $customerBanService,
         private readonly OrderAuthorizationGuard $authorizationGuard,
         private readonly AfterHoursDeterminationService $afterHoursDeterminationService,
         private readonly CallCenterAgentEligibilityService $ccaEligibilityService,
         private readonly OrderShipmentLockService $shipmentLockService,
+        private readonly OrderCourierLookupService $courierLookupService,
+        private readonly OrderDiscountService $discountService,
     ) {
     }
 
@@ -61,6 +65,10 @@ class OrderService
      *     }>,
      *     discount_amount?: float|string,
      *     courier_fee_amount?: float|string,
+     *     order_type?: string|OrderType,
+     *     draft_courier_id?: int|null,
+     *     draft_courier_service_id?: int|null,
+     *     draft_courier_city_id?: int|null,
      *     reseller_commission_amount?: float|string,
      *     supplier_commission_amount?: float|string,
      *     company_commission_amount?: float|string,
@@ -104,6 +112,10 @@ class OrderService
 
             $this->assertPayableAmounts($itemsSubtotal, $discountAmount, $courierFeeAmount);
 
+            $this->assertPhonesNotBanned($payload['customer'] ?? []);
+
+            $draftCourier = $this->resolveDraftCourierSelection($payload);
+
             $customerPayable = round($itemsSubtotal - $discountAmount + $courierFeeAmount, 2);
 
             $evaluatedAt = $payload['evaluated_at'] ?? null;
@@ -116,6 +128,11 @@ class OrderService
             $source = $payload['source'] ?? OrderSource::MANUAL;
             if (is_string($source)) {
                 $source = OrderSource::from($source);
+            }
+
+            $orderType = $payload['order_type'] ?? OrderType::NEW;
+            if (is_string($orderType)) {
+                $orderType = OrderType::from($orderType);
             }
 
             // Identity resolution happens inside the same transaction so later
@@ -152,6 +169,7 @@ class OrderService
 
             $order = Order::query()->create([
                 'source' => $source,
+                'order_type' => $orderType,
                 'status' => OrderStatus::PENDING,
                 'market_id' => $market->id,
                 'currency_id' => $currency->id,
@@ -163,6 +181,9 @@ class OrderService
                 'customer_id' => $customer->id,
                 'cca_id' => $ccaId,
                 'available_in_pool' => $availableInPool,
+                'draft_courier_id' => $draftCourier['draft_courier_id'],
+                'draft_courier_service_id' => $draftCourier['draft_courier_service_id'],
+                'draft_courier_city_id' => $draftCourier['draft_courier_city_id'],
                 'customer_name_snapshot' => $payload['customer']['display_name'],
                 'primary_phone_snapshot' => (string) $payload['customer']['primary_phone'],
                 'secondary_phone_snapshot' => $payload['customer']['secondary_phone'] ?? null,
@@ -208,7 +229,7 @@ class OrderService
                 'recipient_name' => $address['recipient_name'],
                 'line1' => $address['line1'],
                 'line2' => $address['line2'] ?? null,
-                'city_name' => $address['city_name'],
+                'city_name' => (string) ($address['city_name'] ?? ''),
                 'district_name' => $address['district_name'] ?? null,
                 'postal_code' => $address['postal_code'] ?? null,
                 'country_id' => (int) $address['country_id'],
@@ -226,6 +247,300 @@ class OrderService
 
             return $order->fresh($this->defaultRelations());
         });
+    }
+
+    /**
+     * Update commercial order details (customer, address, items, draft courier, discount).
+     *
+     * Market and supplier are immutable. Cancelled / confirmed orders cannot be rewritten.
+     * Items and draft courier are locked after successful shipment booking.
+     * Discount follows existing confirmation lock rules.
+     *
+     * @param  array{
+     *     customer: array{
+     *         display_name: string,
+     *         primary_country_id: int,
+     *         primary_phone: string,
+     *         primary_phone_country_id: int,
+     *         secondary_phone?: string|null,
+     *         secondary_phone_country_id?: int|null
+     *     },
+     *     address: array{
+     *         recipient_name: string,
+     *         line1: string,
+     *         line2?: string|null,
+     *         city_name: string,
+     *         district_name?: string|null,
+     *         postal_code?: string|null,
+     *         country_id: int,
+     *         full_address_text?: string|null
+     *     },
+     *     items: list<array{
+     *         product_variant_id: int,
+     *         quantity: int,
+     *         unit_selling_price: float|string
+     *     }>,
+     *     discount_amount?: float|string,
+     *     courier_fee_amount?: float|string,
+     *     draft_courier_id?: int|null,
+     *     draft_courier_service_id?: int|null,
+     *     draft_courier_city_id?: int|null,
+     *     duplicate_warning_overridden?: bool,
+     *     after_hours_warning_shown?: bool,
+     *     updated_by?: int|null
+     * }  $payload
+     */
+    public function updateDetails(
+        Order $order,
+        array $payload,
+        ?int $updatedBy = null,
+        ?int $actorCompanyId = null,
+    ): Order {
+        return DB::transaction(function () use ($order, $payload, $updatedBy, $actorCompanyId) {
+            $order = Order::query()
+                ->with(['items', 'address', 'shipment', 'market'])
+                ->lockForUpdate()
+                ->findOrFail($order->id);
+
+            if ($actorCompanyId !== null) {
+                $this->authorizationGuard->assertOrderCompany($order, $actorCompanyId);
+            }
+
+            if ($order->isCancelled()) {
+                throw ValidationException::withMessages([
+                    'order' => ['Cancelled orders cannot be edited.'],
+                ]);
+            }
+
+            $status = $order->status instanceof OrderStatus
+                ? $order->status
+                : OrderStatus::tryFrom((string) $order->status);
+
+            if ($status === OrderStatus::CONFIRMED || $order->confirmed_at !== null) {
+                throw ValidationException::withMessages([
+                    'order' => ['Confirmed orders cannot be edited.'],
+                ]);
+            }
+
+            $this->assertPhonesNotBanned($payload['customer'] ?? []);
+
+            $supplierId = (int) $order->supplier_id;
+            $marketId = (int) $order->market_id;
+
+            $this->shipmentLockService->assertOrderItemsMutable($order);
+            $this->shipmentLockService->assertShipmentMutable($order);
+
+            $preparedItems = $this->prepareItems(
+                items: $payload['items'] ?? [],
+                supplierId: $supplierId,
+                marketId: $marketId,
+            );
+
+            $itemsSubtotal = $preparedItems['items_subtotal'];
+            $totalWeight = $preparedItems['total_weight'];
+
+            $discountAmount = array_key_exists('discount_amount', $payload)
+                ? round((float) $payload['discount_amount'], 2)
+                : round((float) $order->discount_amount, 2);
+
+            if (abs($discountAmount - round((float) $order->discount_amount, 2)) > 0.001) {
+                $this->discountService->assertDiscountMutable($order);
+            }
+
+            $draftCourier = $this->resolveDraftCourierSelection([
+                ...$payload,
+                'supplier_id' => $supplierId,
+                'market_id' => $marketId,
+            ]);
+
+            $courierFeeAmount = array_key_exists('courier_fee_amount', $payload)
+                ? round((float) $payload['courier_fee_amount'], 2)
+                : round((float) $order->courier_fee_amount, 2);
+
+            $this->assertPayableAmounts($itemsSubtotal, $discountAmount, $courierFeeAmount);
+
+            $identity = $this->customerIdentityService->resolveOrCreate([
+                ...$payload['customer'],
+                'created_by' => $updatedBy ?? ($payload['updated_by'] ?? null),
+            ]);
+            $customer = $identity['customer'];
+
+            $variantIds = array_map(
+                static fn (array $line) => (int) $line['product_variant_id'],
+                $preparedItems['lines'],
+            );
+
+            $duplicates = array_values(array_filter(
+                $this->findPotentialDuplicates((int) $customer->id, $variantIds),
+                static fn (Order $candidate) => (int) $candidate->id !== (int) $order->id,
+            ));
+            $duplicateMeta = $this->resolveDuplicateMeta($duplicates, $payload);
+
+            $customerPayable = round($itemsSubtotal - $discountAmount + $courierFeeAmount, 2);
+            $actorId = $updatedBy ?? (isset($payload['updated_by']) ? (int) $payload['updated_by'] : null);
+
+            $order->update([
+                'customer_id' => $customer->id,
+                'draft_courier_id' => $draftCourier['draft_courier_id'],
+                'draft_courier_service_id' => $draftCourier['draft_courier_service_id'],
+                'draft_courier_city_id' => $draftCourier['draft_courier_city_id'],
+                'customer_name_snapshot' => $payload['customer']['display_name'],
+                'primary_phone_snapshot' => (string) $payload['customer']['primary_phone'],
+                'secondary_phone_snapshot' => $payload['customer']['secondary_phone'] ?? null,
+                'primary_phone_country_id' => (int) $payload['customer']['primary_phone_country_id'],
+                'secondary_phone_country_id' => isset($payload['customer']['secondary_phone'])
+                    ? (int) ($payload['customer']['secondary_phone_country_id'] ?? $payload['customer']['primary_phone_country_id'])
+                    : null,
+                'items_subtotal' => $itemsSubtotal,
+                'discount_amount' => $discountAmount,
+                'courier_fee_amount' => $courierFeeAmount,
+                'customer_payable_amount' => $customerPayable,
+                'total_weight' => $totalWeight,
+                'after_hours_warning_shown' => (bool) ($payload['after_hours_warning_shown'] ?? $order->after_hours_warning_shown),
+                'duplicate_warning_shown' => $duplicateMeta['duplicate_warning_shown']
+                    ? true
+                    : (bool) $order->duplicate_warning_shown,
+                'duplicate_warning_overridden' => $duplicateMeta['duplicate_warning_overridden']
+                    ? true
+                    : (bool) $order->duplicate_warning_overridden,
+                'duplicate_reference_order_id' => $duplicateMeta['duplicate_reference_order_id']
+                    ?? $order->duplicate_reference_order_id,
+                'updated_by' => $actorId,
+            ]);
+
+            OrderItem::query()->where('order_id', $order->id)->delete();
+            foreach ($preparedItems['lines'] as $line) {
+                OrderItem::query()->create([
+                    ...$line,
+                    'order_id' => $order->id,
+                ]);
+            }
+
+            $address = $payload['address'];
+            $addressAttributes = [
+                'recipient_name' => $address['recipient_name'],
+                'line1' => $address['line1'],
+                'line2' => $address['line2'] ?? null,
+                'city_name' => (string) ($address['city_name'] ?? ''),
+                'district_name' => $address['district_name'] ?? null,
+                'postal_code' => $address['postal_code'] ?? null,
+                'country_id' => (int) $address['country_id'],
+                'full_address_text' => $address['full_address_text'] ?? null,
+            ];
+
+            if ($order->address !== null) {
+                $order->address->update($addressAttributes);
+            } else {
+                OrderAddress::query()->create([
+                    'order_id' => $order->id,
+                    ...$addressAttributes,
+                ]);
+            }
+
+            return $order->fresh($this->defaultRelations());
+        });
+    }
+
+    /**
+     * Block order creation when primary or secondary phone matches an active ban.
+     *
+     * @param  array<string, mixed>  $customer
+     */
+    protected function assertPhonesNotBanned(array $customer): void
+    {
+        $primaryPhone = trim((string) ($customer['primary_phone'] ?? ''));
+        $primaryCountryId = (int) ($customer['primary_phone_country_id'] ?? 0);
+
+        if ($primaryPhone === '' || $primaryCountryId < 1) {
+            throw ValidationException::withMessages([
+                'primary_phone' => ['A primary phone number is required.'],
+            ]);
+        }
+
+        $primaryBan = $this->customerBanService->findBanByRawPhone($primaryPhone, $primaryCountryId);
+        if ($primaryBan['is_banned']) {
+            throw ValidationException::withMessages([
+                'primary_phone' => ['This customer phone number is banned. Order creation is blocked.'],
+            ]);
+        }
+
+        $secondaryPhone = isset($customer['secondary_phone'])
+            ? trim((string) $customer['secondary_phone'])
+            : '';
+
+        if ($secondaryPhone === '') {
+            return;
+        }
+
+        $secondaryCountryId = (int) ($customer['secondary_phone_country_id']
+            ?? $customer['primary_phone_country_id']
+            ?? 0);
+
+        $secondaryBan = $this->customerBanService->findBanByRawPhone($secondaryPhone, $secondaryCountryId);
+        if ($secondaryBan['is_banned']) {
+            throw ValidationException::withMessages([
+                'secondary_phone' => ['This customer phone number is banned. Order creation is blocked.'],
+            ]);
+        }
+    }
+
+    /**
+     * Validate optional draft courier selection without creating a shipment.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array{
+     *     draft_courier_id: ?int,
+     *     draft_courier_service_id: ?int,
+     *     draft_courier_city_id: ?int
+     * }
+     */
+    protected function resolveDraftCourierSelection(array $payload): array
+    {
+        $courierId = isset($payload['draft_courier_id']) && $payload['draft_courier_id'] !== null
+            ? (int) $payload['draft_courier_id']
+            : null;
+        $serviceId = isset($payload['draft_courier_service_id']) && $payload['draft_courier_service_id'] !== null
+            ? (int) $payload['draft_courier_service_id']
+            : null;
+        $cityId = isset($payload['draft_courier_city_id']) && $payload['draft_courier_city_id'] !== null
+            ? (int) $payload['draft_courier_city_id']
+            : null;
+
+        if ($courierId === null && $serviceId === null && $cityId === null) {
+            return [
+                'draft_courier_id' => null,
+                'draft_courier_service_id' => null,
+                'draft_courier_city_id' => null,
+            ];
+        }
+
+        if ($courierId === null) {
+            throw ValidationException::withMessages([
+                'draft_courier_id' => ['A courier is required when draft courier details are supplied.'],
+            ]);
+        }
+
+        $courier = $this->courierLookupService->requireEligibleCourierForSupplierMarket(
+            (int) $payload['supplier_id'],
+            (int) $payload['market_id'],
+            $courierId,
+        );
+
+        if ($serviceId !== null) {
+            $service = $this->courierLookupService->requireServiceForCourier($courierId, $serviceId);
+            $serviceId = (int) $service->id;
+        }
+
+        if ($cityId !== null) {
+            $city = $this->courierLookupService->requireCityForCourier($courierId, $cityId);
+            $cityId = (int) $city->id;
+        }
+
+        return [
+            'draft_courier_id' => (int) $courier->id,
+            'draft_courier_service_id' => $serviceId,
+            'draft_courier_city_id' => $cityId,
+        ];
     }
 
     public function generateOrderNumber(int $id): string

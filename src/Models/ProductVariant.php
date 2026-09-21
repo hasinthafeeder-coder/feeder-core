@@ -26,6 +26,7 @@ class ProductVariant extends Model
         'suggested_price_min',
         'suggested_price_max',
         'company_commission',
+        'reorder_level',
         'sort_order',
         'is_active',
         'created_by',
@@ -42,6 +43,7 @@ class ProductVariant extends Model
             'suggested_price_min' => 'decimal:2',
             'suggested_price_max' => 'decimal:2',
             'company_commission' => 'decimal:2',
+            'reorder_level' => 'integer',
             'sort_order' => 'integer',
             'is_active' => 'boolean',
         ];
