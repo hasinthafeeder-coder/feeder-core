@@ -13,7 +13,11 @@ use RuntimeException;
  * - Fardar District → courier_states (UI "District / State")
  * - Fardar City → courier_cities
  *
- * Expected headers: district id, district name, city id, city name
+ * Expected headers (underscore or space variants accepted):
+ *   city_id, city_name, zone_id, zone name, district_id, district name
+ *
+ * Zone columns are recognized for CSV compatibility but are not persisted;
+ * the shared courier location schema has no zone storage.
  */
 final class FardarLocationCsvMapper
 {
@@ -24,6 +28,10 @@ final class FardarLocationCsvMapper
     public const HEADER_CITY_ID = 'city id';
 
     public const HEADER_CITY_NAME = 'city name';
+
+    public const HEADER_ZONE_ID = 'zone id';
+
+    public const HEADER_ZONE_NAME = 'zone name';
 
     /**
      * @return list<string>
@@ -154,8 +162,10 @@ final class FardarLocationCsvMapper
     private function normalizeHeader(string $header): string
     {
         $header = preg_replace('/^\xEF\xBB\xBF/', '', $header) ?? $header;
+        $header = strtolower(trim($header));
 
-        return strtolower(trim($header));
+        // Accept both city_id and "city id" (corrected CSV uses underscores; legacy used spaces).
+        return str_replace('_', ' ', $header);
     }
 
     /**

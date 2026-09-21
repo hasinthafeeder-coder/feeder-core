@@ -5,6 +5,7 @@ namespace Feeder\Core\Services\Courier;
 use Feeder\Core\Models\Courier;
 use Feeder\Core\Models\SupplierCourierAccount;
 use Feeder\Core\Services\Courier\Curfox\RoyalCourierAccountSetupService;
+use Feeder\Core\Services\Courier\TransExpress\TransExpressCourierAccountSetupService;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -29,7 +30,9 @@ class CourierConnectionService
             return CourierConnectionResult::failure('Courier service could not be resolved for this account.');
         }
 
-        if (strtoupper((string) $account->courier->code) === 'ROYAL') {
+        $code = strtoupper((string) $account->courier->code);
+
+        if ($code === 'ROYAL') {
             try {
                 app(RoyalCourierAccountSetupService::class)->refreshToken($account);
 
@@ -39,6 +42,27 @@ class CourierConnectionService
             } catch (ValidationException $e) {
                 $messages = collect($e->errors())->flatten()->filter()->values();
                 $first = (string) ($messages->first() ?? 'Invalid ROYAL credentials.');
+
+                return CourierConnectionResult::failure('Connection failed: '.$first);
+            } catch (Throwable $e) {
+                report($e);
+
+                return CourierConnectionResult::failure(
+                    'Connection failed: Unable to validate credentials with the courier provider.'
+                );
+            }
+        }
+
+        if ($code === 'TRANSEXPRESS') {
+            try {
+                app(TransExpressCourierAccountSetupService::class)->refreshToken($account);
+
+                return CourierConnectionResult::success(
+                    'Connection successful. TransExpress login authenticated and token updated.'
+                );
+            } catch (ValidationException $e) {
+                $messages = collect($e->errors())->flatten()->filter()->values();
+                $first = (string) ($messages->first() ?? 'Invalid TransExpress credentials.');
 
                 return CourierConnectionResult::failure('Connection failed: '.$first);
             } catch (Throwable $e) {

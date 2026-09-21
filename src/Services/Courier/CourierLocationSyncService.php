@@ -94,7 +94,14 @@ class CourierLocationSyncService
     /**
      * Import Fardar district/city master data from a CSV file.
      *
-     * Expected columns: district id, district name, city id, city name
+     * Expected columns (underscore or space variants):
+     *   city_id, city_name, zone_id, zone name, district_id, district name
+     *
+     * Mapping:
+     * - district_id / district name → courier_states (external_id / name)
+     * - city_id / city_name → courier_cities (external_id / name), parented by district_id
+     * - zone_id / zone name → ignored (no zone storage in shared schema)
+     *
      * Identity: (courier_id, external_id) for both districts (states) and cities.
      */
     public function importFromCsv(Courier $courier, string $csvPath): CourierLocationSyncResult
@@ -146,10 +153,13 @@ class CourierLocationSyncService
                         continue;
                     }
 
+                    $result->csvRows++;
                     $this->recordError($result, (string) ($mapped['message'] ?? 'Malformed CSV row.'));
 
                     continue;
                 }
+
+                $result->csvRows++;
 
                 /** @var MappedCourierState $district */
                 $district = $mapped['district'];
@@ -169,6 +179,9 @@ class CourierLocationSyncService
         } finally {
             fclose($handle);
         }
+
+        $result->districtsMapped = count($districtsByExternalId);
+        $result->citiesMapped = count($citiesByExternalId);
 
         if ($districtsByExternalId === [] && $citiesByExternalId === []) {
             return $result;

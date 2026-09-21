@@ -28,6 +28,7 @@ class OrderService
         private readonly OrderShipmentLockService $shipmentLockService,
         private readonly OrderCourierLookupService $courierLookupService,
         private readonly OrderDiscountService $discountService,
+        private readonly OrderPaymentReviewService $paymentReviewService,
     ) {
     }
 
@@ -321,6 +322,8 @@ class OrderService
                     'order' => ['Confirmed orders cannot be edited.'],
                 ]);
             }
+
+            $this->paymentReviewService->assertNotPendingApproval($order);
 
             $this->assertPhonesNotBanned($payload['customer'] ?? []);
 

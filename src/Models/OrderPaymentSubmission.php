@@ -21,6 +21,7 @@ class OrderPaymentSubmission extends Model
         'amount',
         'description',
         'slip_path',
+        'slip_file_uuid',
         'slip_original_name',
         'submitted_by_user_id',
         'submitted_by_company_id',
@@ -48,6 +49,43 @@ class OrderPaymentSubmission extends Model
                 $submission->uuid = (string) Str::uuid();
             }
         });
+
+        // Submission evidence is append-only. Only review fields may change after create.
+        static::updating(function (OrderPaymentSubmission $submission): void {
+            $immutable = [
+                'uuid',
+                'order_id',
+                'method',
+                'reference_number',
+                'amount',
+                'description',
+                'slip_path',
+                'slip_file_uuid',
+                'slip_original_name',
+                'submitted_by_user_id',
+                'submitted_by_company_id',
+                'submitted_at',
+            ];
+
+            foreach ($immutable as $field) {
+                if ($submission->isDirty($field)) {
+                    throw \Illuminate\Validation\ValidationException::withMessages([
+                        'payment' => [
+                            'Payment submission evidence cannot be modified after creation.',
+                        ],
+                    ]);
+                }
+            }
+        });
+
+        static::deleting(function (): bool {
+            return false;
+        });
+    }
+
+    public function getRouteKeyName(): string
+    {
+        return 'uuid';
     }
 
     public function order(): BelongsTo
@@ -58,6 +96,11 @@ class OrderPaymentSubmission extends Model
     public function submittedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'submitted_by_user_id');
+    }
+
+    public function submittedByCompany(): BelongsTo
+    {
+        return $this->belongsTo(Company::class, 'submitted_by_company_id');
     }
 
     public function reviewedByUser(): BelongsTo

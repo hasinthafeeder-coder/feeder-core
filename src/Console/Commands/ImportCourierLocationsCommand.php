@@ -59,17 +59,35 @@ class ImportCourierLocationsCommand extends Command
         $citiesTotal = CourierCity::query()->where('courier_id', $courier->id)->count();
 
         $this->newLine();
-        $this->info('Fardar location import completed.');
+        $this->info('FARDAR LOCATION IMPORT');
         $this->newLine();
-        $this->line('Districts created: '.$result->statesCreated);
-        $this->line('Districts updated: '.$result->statesUpdated);
-        $this->line('Cities created: '.$result->citiesCreated);
-        $this->line('Cities updated: '.$result->citiesUpdated);
-        $this->line('Rows skipped: '.$result->rowsSkipped);
-        $this->line('Errors: '.$result->errors);
+        $this->line('CSV rows:');
+        $this->line((string) $result->csvRows);
         $this->newLine();
-        $this->line('Districts total: '.$statesTotal);
-        $this->line('Cities total: '.$citiesTotal);
+        $this->line('Districts:');
+        $this->line((string) $result->districtsMapped);
+        $this->newLine();
+        $this->line('Cities:');
+        $this->line((string) $result->citiesMapped);
+        $this->newLine();
+        $this->line('Created:');
+        $this->line('  States: '.$result->statesCreated);
+        $this->line('  Cities: '.$result->citiesCreated);
+        $this->newLine();
+        $this->line('Updated:');
+        $this->line('  States: '.$result->statesUpdated);
+        $this->line('  Cities: '.$result->citiesUpdated);
+        $this->newLine();
+        $this->line('Skipped:');
+        $this->line((string) $result->rowsSkipped);
+        $this->newLine();
+        $this->line('Errors:');
+        $this->line((string) $result->errors);
+        $this->newLine();
+        $this->info('FARDAR DATABASE TOTALS');
+        $this->newLine();
+        $this->line('States/Districts: '.$statesTotal);
+        $this->line('Cities: '.$citiesTotal);
 
         if ($result->errorMessages !== []) {
             $this->newLine();

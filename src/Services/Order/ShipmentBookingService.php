@@ -48,6 +48,14 @@ class ShipmentBookingService
                 $this->authorizationGuard->assertOrderCompany($order, $actorCompanyId);
             }
 
+            if ($order->hasPendingPaymentApproval()) {
+                throw ValidationException::withMessages([
+                    'order' => [
+                        'This order is locked while a bank transfer payment is pending approval.',
+                    ],
+                ]);
+            }
+
             if ($order->shipment !== null) {
                 throw ValidationException::withMessages([
                     'order_id' => ['Order already has a shipment.'],

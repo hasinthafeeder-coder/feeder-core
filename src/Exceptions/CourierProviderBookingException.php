@@ -67,7 +67,14 @@ class CourierProviderBookingException extends ValidationException
         ?array $request = null,
         bool $responseTruncated = false,
     ): self {
-        return self::make('Royal Express returned a non-JSON booking response.', [
+        $label = match (strtoupper($provider)) {
+            'ROYAL' => 'Royal Express',
+            'TRANSEXPRESS' => 'TransExpress',
+            'FARDAR' => 'Fardar Domestic',
+            default => $provider !== '' ? $provider : 'Courier provider',
+        };
+
+        return self::make($label.' returned a non-JSON booking response.', [
             'provider' => $provider,
             'failure_type' => 'invalid_json',
             'http_status' => $httpStatus,

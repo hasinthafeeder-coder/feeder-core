@@ -32,6 +32,10 @@ class AdminMenu
                             MenuItem::make('Customer CRIB')
                                 ->route('crib.index')
                                 ->permission('customers.crib.view'),
+
+                            MenuItem::make('Review Bank Transfers')
+                                ->route('orders.payment-reviews.index')
+                                ->permission('orders.payment.review'),
                         ])
                 )
                 ->addItem(

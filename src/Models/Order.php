@@ -3,6 +3,8 @@
 namespace Feeder\Core\Models;
 
 use Feeder\Core\Enums\OrderAssignmentState;
+use Feeder\Core\Enums\OrderPaymentMethod;
+use Feeder\Core\Enums\OrderPaymentReviewStatus;
 use Feeder\Core\Enums\OrderSource;
 use Feeder\Core\Enums\OrderStatus;
 use Feeder\Core\Enums\OrderType;
@@ -110,6 +112,18 @@ class Order extends Model
     public function isCancelled(): bool
     {
         return $this->status === OrderStatus::CANCELLED;
+    }
+
+    /**
+     * True when a bank-transfer submission is awaiting admin review.
+     * Operational status is unchanged; mutation locks key off this flag.
+     */
+    public function hasPendingPaymentApproval(): bool
+    {
+        return $this->paymentSubmissions()
+            ->where('method', OrderPaymentMethod::BANK_TRANSFER)
+            ->where('review_status', OrderPaymentReviewStatus::PENDING_REVIEW)
+            ->exists();
     }
 
     public function assignmentState(): OrderAssignmentState

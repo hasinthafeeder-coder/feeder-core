@@ -14,6 +14,9 @@ final class CourierLocationSyncResult
         public int $citiesUpdated = 0,
         public int $citiesSkipped = 0,
         public int $rowsSkipped = 0,
+        public int $csvRows = 0,
+        public int $districtsMapped = 0,
+        public int $citiesMapped = 0,
         public int $errors = 0,
         /** @var list<string> */
         public array $errorMessages = [],
@@ -28,6 +31,9 @@ final class CourierLocationSyncResult
         $this->citiesUpdated += $other->citiesUpdated;
         $this->citiesSkipped += $other->citiesSkipped;
         $this->rowsSkipped += $other->rowsSkipped;
+        $this->csvRows += $other->csvRows;
+        $this->districtsMapped += $other->districtsMapped;
+        $this->citiesMapped += $other->citiesMapped;
         $this->errors += $other->errors;
         $this->errorMessages = array_values(array_merge($this->errorMessages, $other->errorMessages));
     }
@@ -40,6 +46,9 @@ final class CourierLocationSyncResult
      *     cities_updated: int,
      *     cities_skipped: int,
      *     rows_skipped: int,
+     *     csv_rows: int,
+     *     districts_mapped: int,
+     *     cities_mapped: int,
      *     errors: int,
      *     error_messages: list<string>
      * }
@@ -53,6 +62,9 @@ final class CourierLocationSyncResult
             'cities_updated' => $this->citiesUpdated,
             'cities_skipped' => $this->citiesSkipped,
             'rows_skipped' => $this->rowsSkipped,
+            'csv_rows' => $this->csvRows,
+            'districts_mapped' => $this->districtsMapped,
+            'cities_mapped' => $this->citiesMapped,
             'errors' => $this->errors,
             'error_messages' => $this->errorMessages,
         ];

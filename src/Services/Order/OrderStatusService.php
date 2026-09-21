@@ -53,6 +53,14 @@ class OrderStatusService
                 $this->authorizationGuard->assertOrderCompany($order, $actorCompanyId);
             }
 
+            if ($order->hasPendingPaymentApproval()) {
+                throw ValidationException::withMessages([
+                    'order' => [
+                        'This order is locked while a bank transfer payment is pending approval.',
+                    ],
+                ]);
+            }
+
             $fromStatus = $order->status;
 
             if ($fromStatus === $toStatus) {

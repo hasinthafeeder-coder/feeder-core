@@ -41,6 +41,8 @@ return [
     */
     'courier_booking_adapters' => [
         'ROYAL' => \Feeder\Core\Services\Courier\Curfox\RoyalBookingAdapter::class,
+        'TRANSEXPRESS' => \Feeder\Core\Services\Courier\TransExpress\TransExpressBookingAdapter::class,
+        'FARDAR' => \Feeder\Core\Services\Courier\Fardar\FardarBookingAdapter::class,
     ],
 
     /*
@@ -57,6 +59,8 @@ return [
     */
     'courier_credential_schemas' => [
         'ROYAL' => \Feeder\Core\Services\Courier\CredentialSchema\RoyalExpressCredentialSchema::class,
+        'TRANSEXPRESS' => \Feeder\Core\Services\Courier\CredentialSchema\TransExpressCredentialSchema::class,
+        'FARDAR' => \Feeder\Core\Services\Courier\CredentialSchema\FardarCredentialSchema::class,
     ],
 
     /*
@@ -73,6 +77,8 @@ return [
     */
     'courier_connection_testers' => [
         'ROYAL' => \Feeder\Core\Services\Courier\Curfox\CurfoxConnectionTester::class,
+        'TRANSEXPRESS' => \Feeder\Core\Services\Courier\TransExpress\TransExpressConnectionTester::class,
+        'FARDAR' => \Feeder\Core\Services\Courier\Fardar\FardarConnectionTester::class,
     ],
 
     /*
@@ -104,4 +110,29 @@ return [
     'transexpress' => [
         'base_url' => env('TRANSEXPRESS_BASE_URL', 'https://portal.transexpress.lk/api'),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Fardar Domestic booking / create-parcel
+    |--------------------------------------------------------------------------
+    |
+    | Provider-level base URL for form-urlencoded create-parcel requests.
+    | Supplier Client ID / API Key live in supplier_courier_accounts — never here.
+    | Prefer config('services.fardar.*') in host apps; this is the package fallback.
+    |
+    */
+    'fardar' => [
+        'base_url' => env('FARDAR_BASE_URL', 'https://www.fdedomestic.com'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Fardar location cleanup (test seam)
+    |--------------------------------------------------------------------------
+    |
+    | When true, FardarLocationCleanupService throws after deleting cities so
+    | the surrounding DB transaction rolls back. Used only by feature tests.
+    |
+    */
+    'fardar_cleanup_force_fail_after_cities' => false,
 ];
