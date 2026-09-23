@@ -11,6 +11,7 @@ use Feeder\Core\Models\Order;
 use Feeder\Core\Models\OrderItem;
 use Feeder\Core\Models\SupplierCourierAccount;
 use Feeder\Core\Services\Courier\CourierBookingDebugSanitizer;
+use Feeder\Core\Services\Courier\CourierBookingDefaults;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -81,7 +82,7 @@ final class RoyalBookingAdapter implements CourierBookingAdapter
                 'origin_state_name' => $meta[RoyalAccountMeta::KEY_ORIGIN_STATE_NAME],
             ],
             'order_data' => [
-                $this->buildOrderData($order, $city, $weightKg, $courierFee),
+                $this->buildOrderData($order, $city, $courierFee),
             ],
         ];
 
@@ -118,7 +119,7 @@ final class RoyalBookingAdapter implements CourierBookingAdapter
     /**
      * @return array<string, mixed>
      */
-    private function buildOrderData(Order $order, CourierCity $city, float $weightKg, float $courierFee): array
+    private function buildOrderData(Order $order, CourierCity $city, float $courierFee): array
     {
         $customerName = trim((string) $order->customer_name_snapshot);
         $customerPhone = trim((string) $order->primary_phone_snapshot);
@@ -127,7 +128,7 @@ final class RoyalBookingAdapter implements CourierBookingAdapter
         $destinationState = $this->resolveDestinationStateName($city);
         $orderNo = trim((string) $order->order_number);
         $cod = $this->resolveCodAmount($order, $courierFee);
-        $weight = $this->resolveWeightKg($weightKg);
+        $weight = CourierBookingDefaults::COURIER_BOOKING_WEIGHT_KG;
         $description = $this->resolveDescription($order);
         $secondaryPhone = trim((string) ($order->secondary_phone_snapshot ?? ''));
 
@@ -159,10 +160,6 @@ final class RoyalBookingAdapter implements CourierBookingAdapter
 
         if ($cod < 0) {
             $errors['cod'] = ['COD amount is invalid for ROYAL booking.'];
-        }
-
-        if ($weight <= 0) {
-            $errors['weight'] = ['Order weight must be greater than zero for ROYAL booking.'];
         }
 
         if ($description === '') {
@@ -240,15 +237,6 @@ final class RoyalBookingAdapter implements CourierBookingAdapter
             + $courierFee;
 
         return (int) round($total);
-    }
-
-    private function resolveWeightKg(float $weightKg): int
-    {
-        if ($weightKg <= 0) {
-            return 0;
-        }
-
-        return (int) ceil($weightKg);
     }
 
     private function resolveDescription(Order $order): string

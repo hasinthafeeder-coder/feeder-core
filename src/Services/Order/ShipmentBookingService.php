@@ -10,6 +10,7 @@ use Feeder\Core\Models\CourierService;
 use Feeder\Core\Models\Order;
 use Feeder\Core\Models\Shipment;
 use Feeder\Core\Models\ShipmentEvent;
+use Feeder\Core\Services\Courier\CourierBookingDefaults;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -79,8 +80,10 @@ class ShipmentBookingService
             $account = $this->courierLookupService->requireSupplierAccount($order, $courier);
             $pricing = $this->courierLookupService->requireMarketPricing($order, $courier);
 
-            $weight = (float) $order->total_weight;
-            $fee = $this->feeCalculator->calculate($pricing, $weight);
+            // Feeder fee / snapshot use real order weight; courier APIs use fixed booking weight.
+            $orderWeightKg = (float) $order->total_weight;
+            $fee = $this->feeCalculator->calculate($pricing, $orderWeightKg);
+            $courierBookingWeightKg = (float) CourierBookingDefaults::COURIER_BOOKING_WEIGHT_KG;
 
             try {
                 $bookingResult = $adapter->book(
@@ -89,7 +92,7 @@ class ShipmentBookingService
                     $service,
                     $city,
                     $account,
-                    $weight,
+                    $courierBookingWeightKg,
                     $fee,
                 );
             } catch (ValidationException $e) {
@@ -120,7 +123,7 @@ class ShipmentBookingService
                 'courier_city_id' => $city->id,
                 'supplier_courier_account_id' => $account->id,
                 'tracking_number' => $trackingNumber,
-                'weight_snapshot' => $weight,
+                'weight_snapshot' => $orderWeightKg,
                 'courier_fee_snapshot' => $fee,
                 'currency_id' => $order->currency_id,
                 'pricing_rule_snapshot' => [

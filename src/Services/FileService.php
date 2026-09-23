@@ -21,20 +21,26 @@ class FileService
         $fileHandle = fopen($file->getRealPath(), 'r');
         
         try {
+            $payload = [
+                'application' => $application,
+                'entity_type' => $entityType,
+                'entity_uuid' => $entityUuid,
+                'category' => $category,
+                'metadata' => json_encode($metadata),
+            ];
+
+            // feeder-files uploaded_by is optional but size:10 when present — omit rather than send null/empty.
+            if (is_string($uploadedBy) && $uploadedBy !== '') {
+                $payload['uploaded_by'] = $uploadedBy;
+            }
+
             $response = $this->client()
                 ->attach(
                     'file',
                     $fileHandle,
                     $file->getClientOriginalName()
                 )
-                ->post('/api/files/upload', [
-                    'application' => $application,
-                    'entity_type' => $entityType,
-                    'entity_uuid' => $entityUuid,
-                    'category' => $category,
-                    'uploaded_by' => $uploadedBy,
-                    'metadata' => json_encode($metadata),
-                ])
+                ->post('/api/files/upload', $payload)
                 ->throw();
 
             return $response->json();

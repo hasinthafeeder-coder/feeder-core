@@ -11,6 +11,8 @@ use Feeder\Core\Models\SupplierCourierAccount;
 interface CourierBookingAdapter
 {
     /**
+     * @param  float  $weightKg  Fixed courier booking weight from CourierBookingDefaults
+     *                           (not Feeder order/product weight). Kept for contract stability.
      * @return array{
      *     tracking_number: string,
      *     external_booking_ref?: string|null,

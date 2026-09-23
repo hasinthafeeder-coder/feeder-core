@@ -11,6 +11,7 @@ use Feeder\Core\Models\Order;
 use Feeder\Core\Models\OrderItem;
 use Feeder\Core\Models\SupplierCourierAccount;
 use Feeder\Core\Services\Courier\CourierBookingDebugSanitizer;
+use Feeder\Core\Services\Courier\CourierBookingDefaults;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -74,7 +75,7 @@ final class FardarBookingAdapter implements CourierBookingAdapter
 
         $order->loadMissing(['address', 'items']);
 
-        $payload = $this->buildPayload($order, $city, $weightKg, $courierFee, $credentials);
+        $payload = $this->buildPayload($order, $city, $courierFee, $credentials);
         $debugRequest = $this->debugRequest($payload, $secrets);
 
         try {
@@ -123,7 +124,6 @@ final class FardarBookingAdapter implements CourierBookingAdapter
     private function buildPayload(
         Order $order,
         CourierCity $city,
-        float $weightKg,
         float $courierFee,
         array $credentials,
     ): array {
@@ -135,7 +135,7 @@ final class FardarBookingAdapter implements CourierBookingAdapter
         $customerAddress = $this->resolveCustomerAddress($order);
         $orderId = $this->resolveOrderId($order);
         $cod = $this->resolveCodAmount($order, $courierFee);
-        $weight = $this->resolveWeight($weightKg);
+        $weight = (string) CourierBookingDefaults::COURIER_BOOKING_WEIGHT_KG;
         $description = $this->resolveDescription($order);
         $recipientCity = $this->resolveRecipientCityName($city);
 
@@ -157,10 +157,6 @@ final class FardarBookingAdapter implements CourierBookingAdapter
             $errors['courier_city_id'] = ['Recipient city name is missing for the selected Fardar destination city.'];
         }
 
-        if ($weight === null) {
-            $errors['weight'] = ['Order weight must be greater than zero for Fardar booking.'];
-        }
-
         if ($description === '') {
             $errors['description'] = ['Order description is required for Fardar booking.'];
         }
@@ -176,7 +172,7 @@ final class FardarBookingAdapter implements CourierBookingAdapter
         $payload = [
             'client_id' => $clientId,
             'api_key' => $apiKey,
-            'parcel_weight' => (string) $weight,
+            'parcel_weight' => $weight,
             'parcel_description' => $description,
             'recipient_name' => $customerName,
             'recipient_contact_1' => $customerPhone,
@@ -238,15 +234,6 @@ final class FardarBookingAdapter implements CourierBookingAdapter
             + $courierFee;
 
         return (int) round($total);
-    }
-
-    private function resolveWeight(float $weightKg): ?string
-    {
-        if ($weightKg <= 0) {
-            return null;
-        }
-
-        return (string) (int) ceil($weightKg);
     }
 
     private function resolveDescription(Order $order): string
