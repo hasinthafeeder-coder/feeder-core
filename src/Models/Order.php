@@ -24,6 +24,7 @@ class Order extends Model
     protected $fillable = [
         'uuid',
         'order_number',
+        'legacy_order_number',
         'source',
         'order_type',
         'status',
@@ -104,9 +105,13 @@ class Order extends Model
 
     public function isDiscountLocked(): bool
     {
+        $status = $this->status instanceof OrderStatus
+            ? $this->status
+            : OrderStatus::tryFrom((string) $this->status);
+
         return $this->discount_locked_at !== null
             || $this->confirmed_at !== null
-            || $this->status === OrderStatus::CONFIRMED;
+            || ($status !== null && $status->locksDiscount());
     }
 
     public function isCancelled(): bool
@@ -280,6 +285,26 @@ class Order extends Model
     public function shipment(): HasOne
     {
         return $this->hasOne(Shipment::class);
+    }
+
+    public function fulfillment(): HasOne
+    {
+        return $this->hasOne(OrderFulfillment::class);
+    }
+
+    public function fulfillmentEvents(): HasMany
+    {
+        return $this->hasMany(OrderFulfillmentEvent::class);
+    }
+
+    public function stockReservations(): HasMany
+    {
+        return $this->hasMany(StockReservation::class);
+    }
+
+    public function stockConsumptions(): HasMany
+    {
+        return $this->hasMany(StockConsumption::class);
     }
 
     public function draftCourier(): BelongsTo

@@ -191,16 +191,12 @@ final class TransExpressBookingAdapter implements CourierBookingAdapter
         return implode(', ', $parts);
     }
 
-    private function resolveOrderNo(Order $order): int|string|null
+    private function resolveOrderNo(Order $order): ?string
     {
         $orderNo = trim((string) $order->order_number);
 
         if ($orderNo === '') {
             return null;
-        }
-
-        if (ctype_digit($orderNo)) {
-            return (int) $orderNo;
         }
 
         return $orderNo;

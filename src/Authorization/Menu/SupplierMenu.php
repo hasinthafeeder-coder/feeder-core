@@ -37,6 +37,28 @@ class SupplierMenu
         );
 
         $menu->addSection(
+            MenuSection::make('ORDERS')
+                ->addItem(
+                    MenuItem::make('New Orders')
+                        ->icon('add_shopping_cart')
+                        ->route('orders.ui.new')
+                        ->permission('orders.view')
+                )
+                ->addItem(
+                    MenuItem::make('Print Orders')
+                        ->icon('print')
+                        ->route('orders.ui.print')
+                        ->permission('orders.view')
+                )
+                ->addItem(
+                    MenuItem::make('Packing Orders')
+                        ->icon('package_2')
+                        ->route('orders.ui.packaging')
+                        ->permission('orders.view')
+                )
+        );
+
+        $menu->addSection(
             MenuSection::make('INVENTORY')
                 ->addItem(
                     MenuItem::make('GRNs')

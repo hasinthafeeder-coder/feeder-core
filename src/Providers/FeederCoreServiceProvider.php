@@ -4,6 +4,7 @@ namespace Feeder\Core\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Feeder\Core\Console\Commands\AuditFardarLocationsCommand;
+use Feeder\Core\Console\Commands\AuditLegacyOrderLifecycleCommand;
 use Feeder\Core\Console\Commands\CleanupFardarLocationsCommand;
 use Feeder\Core\Console\Commands\ImportCourierLocationsCommand;
 use Feeder\Core\Console\Commands\SyncCourierLocationsCommand;
@@ -82,11 +83,16 @@ class FeederCoreServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        // OrderConfirmed must not drive courier booking. Booking happens before
+        // CONFIRMED in Manual Create, Call Center, and bank-transfer approval.
+        // BookCourierWhenOrderConfirmed is retained only as a no-op safety net.
+
         if ($this->app->runningInConsole()) {
             $this->commands([
                 SyncCourierLocationsCommand::class,
                 ImportCourierLocationsCommand::class,
                 AuditFardarLocationsCommand::class,
+                AuditLegacyOrderLifecycleCommand::class,
                 CleanupFardarLocationsCommand::class,
             ]);
         }

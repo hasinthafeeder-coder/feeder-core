@@ -80,7 +80,7 @@ class OrderDiscountService
             ? $order->status
             : OrderStatus::from((string) $order->status);
 
-        if ($status === OrderStatus::CONFIRMED || $order->confirmed_at !== null) {
+        if ($status->locksDiscount() || $order->confirmed_at !== null) {
             throw ValidationException::withMessages([
                 'discount_amount' => ['Discount is locked after confirmation and cannot be modified.'],
             ]);

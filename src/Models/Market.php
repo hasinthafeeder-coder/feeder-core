@@ -20,6 +20,7 @@ class Market extends Model
     {
         return [
             'is_active' => 'boolean',
+            'market_number' => 'integer',
         ];
     }
 

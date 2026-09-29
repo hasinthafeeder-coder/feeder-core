@@ -25,7 +25,8 @@ use Throwable;
  * Bank-transfer payment submission review lifecycle.
  *
  * Payment review state lives on order_payment_submissions, not OrderStatus.
- * Approval confirms the order via OrderStatusService::transition(CONFIRMED).
+ * Approval books the draft courier (when needed), then confirms via
+ * OrderStatusService::transition(CONFIRMED) only after a successful waybill.
  */
 class OrderPaymentReviewService
 {
@@ -41,6 +42,7 @@ class OrderPaymentReviewService
         private readonly OrderStatusService $statusService,
         private readonly OrderCommentService $commentService,
         private readonly FileService $fileService,
+        private readonly DraftOrderCourierBookingService $draftCourierBookingService,
     ) {
     }
 
@@ -62,7 +64,7 @@ class OrderPaymentReviewService
             ? $order->status
             : OrderStatus::tryFrom((string) $order->status);
 
-        if ($status === OrderStatus::CONFIRMED || $order->confirmed_at !== null) {
+        if (($status !== null && $status->locksDiscount()) || $order->confirmed_at !== null) {
             return false;
         }
 
@@ -210,7 +212,7 @@ class OrderPaymentReviewService
     {
         $this->assertActorHasPermission($adminActor, self::PERMISSION_APPROVE);
 
-        return DB::transaction(function () use ($submission, $adminActor) {
+        $orderId = (int) DB::transaction(function () use ($submission, $adminActor) {
             $submission = OrderPaymentSubmission::query()
                 ->lockForUpdate()
                 ->findOrFail($submission->id);
@@ -219,20 +221,99 @@ class OrderPaymentReviewService
 
             $order = Order::query()->lockForUpdate()->findOrFail($submission->order_id);
             $this->assertOrderEligibleForApproval($order);
+            $order->loadMissing('shipment');
 
+            if ($order->shipment === null && ! $order->hasBookedShipment()) {
+                $this->assertCourierReadyForBooking($order);
+            }
+
+            // Clear the pending-payment lock before courier booking.
             $submission->update([
                 'review_status' => OrderPaymentReviewStatus::APPROVED,
                 'reviewed_by_user_id' => (int) $adminActor->id,
                 'reviewed_at' => now(),
             ]);
 
-            $this->statusService->transition(
-                $order,
-                OrderStatus::CONFIRMED,
-                (int) $adminActor->id,
-                null,
-                'Bank transfer payment approved',
-            );
+            return (int) $order->id;
+        });
+
+        $order = Order::query()->with('shipment')->findOrFail($orderId);
+
+        if ($order->shipment === null && ! $order->hasBookedShipment()) {
+            try {
+                $this->draftCourierBookingService->book(
+                    $order,
+                    (int) $order->draft_courier_id,
+                    $order->draft_courier_service_id !== null ? (int) $order->draft_courier_service_id : null,
+                    (int) $order->draft_courier_city_id,
+                    (int) $adminActor->id,
+                    null,
+                );
+            } catch (Throwable $exception) {
+                try {
+                    $this->draftCourierBookingService->recordFailure($order, $exception, (int) $adminActor->id);
+                } catch (Throwable $recordException) {
+                    report($recordException);
+                }
+
+                DB::transaction(function () use ($submission): void {
+                    $submission = OrderPaymentSubmission::query()
+                        ->lockForUpdate()
+                        ->findOrFail($submission->id);
+
+                    if ($submission->review_status === OrderPaymentReviewStatus::APPROVED
+                        || (string) $submission->review_status === OrderPaymentReviewStatus::APPROVED->value
+                    ) {
+                        $submission->update([
+                            'review_status' => OrderPaymentReviewStatus::PENDING_REVIEW,
+                            'reviewed_by_user_id' => null,
+                            'reviewed_at' => null,
+                        ]);
+                    }
+                });
+
+                if ($exception instanceof ValidationException) {
+                    throw $exception;
+                }
+
+                throw ValidationException::withMessages([
+                    'booking' => [
+                        'Courier booking failed. Payment was not approved and the order was not confirmed.',
+                    ],
+                ]);
+            }
+        }
+
+        return DB::transaction(function () use ($submission, $adminActor) {
+            $submission = OrderPaymentSubmission::query()
+                ->lockForUpdate()
+                ->findOrFail($submission->id);
+
+            $order = Order::query()->lockForUpdate()->findOrFail($submission->order_id);
+            $this->assertOrderEligibleForApproval($order);
+            $order->loadMissing('shipment');
+
+            if ($order->shipment === null && ! $order->hasBookedShipment()) {
+                throw ValidationException::withMessages([
+                    'booking' => [
+                        'Courier booking did not produce a shipment. Payment was not confirmed.',
+                    ],
+                ]);
+            }
+
+            $status = $order->status instanceof OrderStatus
+                ? $order->status
+                : OrderStatus::tryFrom((string) $order->status);
+
+            if ($status !== OrderStatus::CONFIRMED) {
+                $this->statusService->transition(
+                    $order,
+                    OrderStatus::CONFIRMED,
+                    (int) $adminActor->id,
+                    null,
+                    'Bank transfer payment approved',
+                );
+            }
 
             $this->commentService->add(
                 $order,
@@ -303,7 +384,7 @@ class OrderPaymentReviewService
             ? $order->status
             : OrderStatus::tryFrom((string) $order->status);
 
-        if ($status === OrderStatus::CONFIRMED || $order->confirmed_at !== null) {
+        if (($status !== null && $status->locksDiscount()) || $order->confirmed_at !== null) {
             throw ValidationException::withMessages([
                 'order' => ['Confirmed orders cannot accept bank transfer submissions.'],
             ]);
@@ -366,7 +447,7 @@ class OrderPaymentReviewService
         if ($order->draft_courier_id === null) {
             throw ValidationException::withMessages([
                 'courier_id' => [
-                    'A courier must be assigned before requesting bank transfer approval.',
+                    'A courier must be saved before this order can be confirmed.',
                 ],
             ]);
         }
@@ -374,7 +455,7 @@ class OrderPaymentReviewService
         if ($order->draft_courier_service_id === null) {
             throw ValidationException::withMessages([
                 'courier_service_id' => [
-                    'A courier service must be assigned before requesting bank transfer approval.',
+                    'A courier service must be saved before this order can be confirmed.',
                 ],
             ]);
         }
@@ -382,7 +463,7 @@ class OrderPaymentReviewService
         if ($order->draft_courier_city_id === null) {
             throw ValidationException::withMessages([
                 'courier_city_id' => [
-                    'A courier city must be assigned before requesting bank transfer approval.',
+                    'A courier city must be saved before this order can be confirmed.',
                 ],
             ]);
         }

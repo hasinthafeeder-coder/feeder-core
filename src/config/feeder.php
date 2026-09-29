@@ -8,6 +8,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Market commercial identifiers
+    |--------------------------------------------------------------------------
+    |
+    | market_number lives on the markets table. Timezones drive YY / DDD and
+    | the daily order_number sequence key (never use UTC for business dates).
+    |
+    */
+    'markets' => [
+        'timezones' => [
+            'lk' => 'Asia/Colombo',
+            'my' => 'Asia/Kuala_Lumpur',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Courier credentials encryption
     |--------------------------------------------------------------------------
     |

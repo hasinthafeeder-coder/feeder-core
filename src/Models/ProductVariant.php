@@ -57,7 +57,16 @@ class ProductVariant extends Model
             }
 
             if ($variant->barcode === null || $variant->barcode === '') {
-                $variant->barcode = ProductVariantBarcodeGenerator::generateUnique();
+                $variant->loadMissing('product');
+                $marketId = $variant->product?->market_id;
+
+                if ($marketId === null) {
+                    throw new \RuntimeException(
+                        'Cannot auto-generate a product barcode without a product market_id.'
+                    );
+                }
+
+                $variant->barcode = app(ProductVariantBarcodeGenerator::class)->allocateNext((int) $marketId);
             }
         });
     }

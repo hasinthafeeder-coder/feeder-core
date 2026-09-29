@@ -119,6 +119,10 @@ class AdminMenu
                                 ->route('products.index')
                                 ->permission('products.view'),
 
+                            MenuItem::make('Barcode Test Sheet')
+                                ->route('products.barcode-test-sheet')
+                                ->permission('products.view'),
+
                             MenuItem::make('Product Categories')
                                 ->route('product-categories.index')
                                 ->permission('product_categories.view'),

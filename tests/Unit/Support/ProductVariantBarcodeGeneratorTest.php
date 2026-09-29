@@ -2,27 +2,14 @@
 
 namespace Tests\Unit\Support;
 
-use Feeder\Core\Support\ProductVariantBarcodeGenerator;
+use Feeder\Core\Support\CommercialIdentifier;
 use PHPUnit\Framework\TestCase;
 
 class ProductVariantBarcodeGeneratorTest extends TestCase
 {
-    public function test_generated_barcode_uses_auto_prefix_and_expected_length(): void
+    public function test_commercial_product_barcode_format_helpers(): void
     {
-        $barcode = ProductVariantBarcodeGenerator::generateUnique(reservedBarcodes: []);
-
-        $this->assertStringStartsWith('AUTO-', $barcode);
-        $this->assertSame(17, strlen($barcode));
-    }
-
-    public function test_generated_barcode_avoids_reserved_values(): void
-    {
-        $reserved = ['AUTO-RESERVED1234'];
-
-        for ($attempt = 0; $attempt < 5; $attempt++) {
-            $barcode = ProductVariantBarcodeGenerator::generateUnique(reservedBarcodes: $reserved);
-
-            $this->assertNotSame('AUTO-RESERVED1234', $barcode);
-        }
+        $this->assertSame('100001', CommercialIdentifier::formatProductBarcode(1, 1));
+        $this->assertSame(6, strlen(CommercialIdentifier::formatProductBarcode(2, 99999)));
     }
 }

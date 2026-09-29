@@ -3,11 +3,13 @@
 namespace Feeder\Core\Services;
 
 use Feeder\Core\Enums\ProductStatus;
+use Feeder\Core\Models\Market;
 use Feeder\Core\Models\Product;
 use Feeder\Core\Models\User;
 use Feeder\Core\Models\ProductDescription;
 use Feeder\Core\Models\ProductImage;
 use Feeder\Core\Models\ProductVariant;
+use Feeder\Core\Support\CommercialIdentifier;
 use Feeder\Core\Support\ProductVariantBarcodeGenerator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -17,6 +19,7 @@ class ProductService
 {
     public function __construct(
         protected CompanyCommissionService $companyCommissionService,
+        protected ProductVariantBarcodeGenerator $barcodeGenerator,
     ) {
     }
     protected function generateUniqueSlug(string $value, ?int $ignoreId = null): string
@@ -245,6 +248,8 @@ class ProductService
     protected function syncVariants(Product $product, array $variants, bool $isCreate): void
     {
         $retainedIds = [];
+        $product->loadMissing('market');
+        $market = $product->market;
 
         foreach ($variants as $index => $variant) {
             if (($variant['delete'] ?? false) && ! empty($variant['id'])) {
@@ -259,9 +264,10 @@ class ProductService
 
             $barcode = trim((string) ($variant['barcode'] ?? ''));
             if ($barcode === '') {
-                $barcode = $existing?->barcode ?: ProductVariantBarcodeGenerator::generateUnique(
-                    $existing?->id
-                );
+                $barcode = $existing?->barcode
+                    ?: $this->barcodeGenerator->allocateNext((int) $product->market_id);
+            } else {
+                $this->assertBarcodeMatchesMarket($barcode, $market, $index);
             }
 
             $attributes = [
@@ -310,6 +316,23 @@ class ProductService
                     fn ($query) => $query
                 )
                 ->delete();
+        }
+    }
+
+    private function assertBarcodeMatchesMarket(string $barcode, ?Market $market, int $index): void
+    {
+        if ($market === null || $market->market_number === null) {
+            throw ValidationException::withMessages([
+                "variants.{$index}.barcode" => ['Product market does not have a configured market number.'],
+            ]);
+        }
+
+        if (! CommercialIdentifier::isValidProductBarcodeForMarket($barcode, (int) $market->market_number)) {
+            throw ValidationException::withMessages([
+                "variants.{$index}.barcode" => [
+                    'Barcode must be exactly 6 digits starting with market number '.$market->market_number.'.',
+                ],
+            ]);
         }
     }
 

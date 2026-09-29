@@ -53,6 +53,18 @@ class CustomerIdentityService
                 $secondaryCountry = $this->findCountry($secondaryCountryId);
                 $secondaryNormalized = $this->phoneNormalizer->normalize($payload['secondary_phone'], $secondaryCountry);
 
+                // Same country + normalized phone must not insert a second customer_phones row.
+                if (
+                    (int) $secondaryCountry->id === (int) $primaryCountry->id
+                    && $secondaryNormalized === $primaryNormalized
+                ) {
+                    throw ValidationException::withMessages([
+                        'secondary_phone' => [
+                            'Secondary phone must be different from the primary phone.',
+                        ],
+                    ]);
+                }
+
                 $secondaryExisting = CustomerPhone::query()
                     ->where('country_id', $secondaryCountry->id)
                     ->where('normalized_phone', $secondaryNormalized)

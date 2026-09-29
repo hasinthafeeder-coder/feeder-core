@@ -29,6 +29,7 @@ class OrderService
         private readonly OrderCourierLookupService $courierLookupService,
         private readonly OrderDiscountService $discountService,
         private readonly OrderPaymentReviewService $paymentReviewService,
+        private readonly OrderNumberGenerator $orderNumberGenerator,
     ) {
     }
 
@@ -214,7 +215,7 @@ class OrderService
             ]);
 
             $order->update([
-                'order_number' => $this->generateOrderNumber((int) $order->id),
+                'order_number' => $this->orderNumberGenerator->allocateNext($market),
             ]);
 
             foreach ($preparedItems['lines'] as $line) {
@@ -317,7 +318,7 @@ class OrderService
                 ? $order->status
                 : OrderStatus::tryFrom((string) $order->status);
 
-            if ($status === OrderStatus::CONFIRMED || $order->confirmed_at !== null) {
+            if (($status !== null && $status->locksDiscount()) || $order->confirmed_at !== null) {
                 throw ValidationException::withMessages([
                     'order' => ['Confirmed orders cannot be edited.'],
                 ]);
@@ -546,9 +547,9 @@ class OrderService
         ];
     }
 
-    public function generateOrderNumber(int $id): string
+    public function generateOrderNumber(Market $market, ?\Carbon\CarbonInterface $at = null): string
     {
-        return sprintf('ORD-%d-%06d', now()->year, $id);
+        return $this->orderNumberGenerator->allocateNext($market, $at);
     }
 
     /**
