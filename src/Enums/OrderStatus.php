@@ -14,6 +14,8 @@ enum OrderStatus: string
     case PRINTED = 'PRINTED';
     case PACKING = 'PACKING';
     case DISPATCHED = 'DISPATCHED';
+    case DELIVERED = 'DELIVERED';
+    case RETURNED = 'RETURNED';
     case CANCELLED = 'CANCELLED';
 
     public function label(): string
@@ -29,6 +31,8 @@ enum OrderStatus: string
             self::PRINTED => 'Printed',
             self::PACKING => 'Packing',
             self::DISPATCHED => 'Dispatched',
+            self::DELIVERED => 'Delivered',
+            self::RETURNED => 'Returned',
             self::CANCELLED => 'Cancelled',
         };
     }
@@ -53,7 +57,8 @@ enum OrderStatus: string
 
     /**
      * Statuses Call Center / reseller operators may set manually.
-     * Includes CANCELLED; excludes supplier-owned PRINT / PRINTED / PACKING / DISPATCHED.
+     * Includes CANCELLED; excludes supplier-owned PRINT / PRINTED / PACKING / DISPATCHED
+     * and post-dispatch outcomes DELIVERED / RETURNED.
      *
      * @return list<self>
      */
@@ -98,11 +103,19 @@ enum OrderStatus: string
     }
 
     /**
+     * Terminal post-dispatch outcomes (courier delivery / return).
+     */
+    public function isPostDispatchOutcome(): bool
+    {
+        return $this === self::DELIVERED || $this === self::RETURNED;
+    }
+
+    /**
      * Whether the order has not reached DISPATCHED yet (includes CANCELLED).
      */
     public function isBeforeDispatch(): bool
     {
-        return $this !== self::DISPATCHED;
+        return $this !== self::DISPATCHED && ! $this->isPostDispatchOutcome();
     }
 
     /**
@@ -110,7 +123,7 @@ enum OrderStatus: string
      */
     public function canCancel(): bool
     {
-        return $this !== self::DISPATCHED && $this !== self::CANCELLED;
+        return $this->isBeforeDispatch() && $this !== self::CANCELLED;
     }
 
     /**
@@ -118,6 +131,7 @@ enum OrderStatus: string
      *
      * Call Center may move freely among call-center statuses.
      * Supplier path is sequential: CONFIRMED → PRINT → PRINTED → PACKING → DISPATCHED.
+     * Post-dispatch outcomes: DISPATCHED → DELIVERED | RETURNED (terminal).
      * CANCELLED is allowed from any pre-dispatch status via canCancel().
      */
     public static function canTransitionTo(self $from, self $to): bool
@@ -134,6 +148,10 @@ enum OrderStatus: string
             return in_array($to, self::callCenterStatuses(), true);
         }
 
+        if ($from->isPostDispatchOutcome()) {
+            return false;
+        }
+
         $callCenter = self::callCenterStatuses();
         if (in_array($from, $callCenter, true) && in_array($to, $callCenter, true)) {
             return true;
@@ -146,7 +164,15 @@ enum OrderStatus: string
             self::PACKING->value => self::DISPATCHED,
         ];
 
-        return ($supplierForward[$from->value] ?? null) === $to;
+        if (($supplierForward[$from->value] ?? null) === $to) {
+            return true;
+        }
+
+        if ($from === self::DISPATCHED) {
+            return $to === self::DELIVERED || $to === self::RETURNED;
+        }
+
+        return false;
     }
 
     /**
@@ -159,7 +185,9 @@ enum OrderStatus: string
             self::PRINT,
             self::PRINTED,
             self::PACKING,
-            self::DISPATCHED => true,
+            self::DISPATCHED,
+            self::DELIVERED,
+            self::RETURNED => true,
             default => false,
         };
     }

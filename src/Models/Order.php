@@ -68,6 +68,8 @@ class Order extends Model
         'operations_hidden_at',
         'confirmed_at',
         'discount_locked_at',
+        'delivered_at',
+        'returned_at',
         'created_by',
         'updated_by',
     ];
@@ -100,6 +102,8 @@ class Order extends Model
             'operations_hidden_at' => 'datetime',
             'confirmed_at' => 'datetime',
             'discount_locked_at' => 'datetime',
+            'delivered_at' => 'datetime',
+            'returned_at' => 'datetime',
         ];
     }
 

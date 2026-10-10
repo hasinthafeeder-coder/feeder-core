@@ -39,6 +39,7 @@ class OrderStatusService
 
     /**
      * Lifecycle rule: any status before DISPATCHED may be cancelled.
+     * DISPATCHED, DELIVERED, RETURNED, and CANCELLED cannot be cancelled.
      */
     public function canCancel(OrderStatus|string|Order $statusOrOrder): bool
     {
@@ -48,7 +49,7 @@ class OrderStatusService
     }
 
     /**
-     * Whether the order/status has not reached DISPATCHED.
+     * Whether the order/status has not reached DISPATCHED (or a later outcome).
      */
     public function isBeforeDispatch(OrderStatus|string|Order $statusOrOrder): bool
     {
@@ -132,6 +133,14 @@ class OrderStatusService
 
             if ($toStatus === OrderStatus::CONFIRMED) {
                 $attributes['confirmed_at'] = now();
+            }
+
+            if ($toStatus === OrderStatus::DELIVERED && $order->delivered_at === null) {
+                $attributes['delivered_at'] = now();
+            }
+
+            if ($toStatus === OrderStatus::RETURNED && $order->returned_at === null) {
+                $attributes['returned_at'] = now();
             }
 
             if ($fromStatus === OrderStatus::CANCELLED && $toStatus !== OrderStatus::CANCELLED) {

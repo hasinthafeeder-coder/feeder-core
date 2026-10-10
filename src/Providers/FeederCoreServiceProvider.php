@@ -28,6 +28,15 @@ use Feeder\Core\Services\Courier\Fardar\FardarConfig;
 use Feeder\Core\Services\Courier\Fardar\FardarCourierAccountSetupService;
 use Feeder\Core\Services\Courier\Fardar\FardarLocationCleanupService;
 use Feeder\Core\Services\Courier\Fardar\FardarLocationCsvMapper;
+use Feeder\Core\Services\Courier\ReceiptImport\CourierReceiptImportMatcher;
+use Feeder\Core\Services\Courier\ReceiptImport\CourierReceiptImportReconciler;
+use Feeder\Core\Services\Courier\ReceiptImport\CourierReceiptImportService;
+use Feeder\Core\Services\Courier\ReceiptImport\CourierReceiptInvoiceParserResolver;
+use Feeder\Core\Services\Courier\ReceiptImport\CourierReceiptSpreadsheetReader;
+use Feeder\Core\Services\Courier\ReceiptImport\FardarInvoiceParser;
+use Feeder\Core\Services\Courier\ReceiptImport\FeederCourierPaymentTemplateParser;
+use Feeder\Core\Services\Courier\ReceiptImport\RoyalExpressInvoiceParser;
+use Feeder\Core\Services\Courier\ReceiptImport\TransExpressInvoiceParser;
 use Feeder\Core\Services\Courier\SupplierCourierAccountService;
 use Feeder\Core\Services\Courier\TransExpress\TransExpressAuthService;
 use Feeder\Core\Services\Courier\TransExpress\TransExpressBookingAdapter;
@@ -38,6 +47,7 @@ use Feeder\Core\Services\Courier\TransExpress\TransExpressMerchantClient;
 use Feeder\Core\Services\PermissionService;
 use Feeder\Core\Authorization\Services\MenuService;
 use Feeder\Core\Support\CredentialsEncrypter;
+use Feeder\Core\Support\MoneyNormalizer;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\View;
 
@@ -79,6 +89,16 @@ class FeederCoreServiceProvider extends ServiceProvider
         $this->app->singleton(FardarLocationCleanupService::class);
         $this->app->singleton(CourierLocationSyncService::class);
         $this->app->singleton(CredentialsEncrypter::class);
+        $this->app->singleton(MoneyNormalizer::class);
+        $this->app->singleton(CourierReceiptSpreadsheetReader::class);
+        $this->app->singleton(FeederCourierPaymentTemplateParser::class);
+        $this->app->singleton(RoyalExpressInvoiceParser::class);
+        $this->app->singleton(TransExpressInvoiceParser::class);
+        $this->app->singleton(FardarInvoiceParser::class);
+        $this->app->singleton(CourierReceiptInvoiceParserResolver::class);
+        $this->app->singleton(CourierReceiptImportMatcher::class);
+        $this->app->singleton(CourierReceiptImportReconciler::class);
+        $this->app->singleton(CourierReceiptImportService::class);
     }
 
     public function boot(): void
