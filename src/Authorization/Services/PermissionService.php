@@ -2,6 +2,7 @@
 
 namespace Feeder\Core\Authorization\Services;
 
+use Feeder\Core\Enums\UserType;
 use Feeder\Core\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -17,12 +18,20 @@ class PermissionService
 
     public function hasPermission(User $user, string $permission): bool
     {
+        if ($this->isSuperAdmin($user)) {
+            return true;
+        }
+
         return $this->getEffectivePermissions($user)
             ->contains($permission);
     }
 
     public function hasAnyPermission(User $user, array $permissions): bool
     {
+        if ($this->isSuperAdmin($user)) {
+            return $permissions !== [];
+        }
+
         return $this->getEffectivePermissions($user)
             ->intersect($permissions)
             ->isNotEmpty();
@@ -30,6 +39,10 @@ class PermissionService
 
     public function hasAllPermissions(User $user, array $permissions): bool
     {
+        if ($this->isSuperAdmin($user)) {
+            return true;
+        }
+
         return collect($permissions)
             ->diff($this->getEffectivePermissions($user))
             ->isEmpty();
@@ -118,5 +131,10 @@ class PermissionService
         $this->resolvedCacheKeys[$user->id] = $key;
 
         return $key;
+    }
+
+    protected function isSuperAdmin(User $user): bool
+    {
+        return $user->user_type === UserType::SUPER_ADMIN->value;
     }
 }

@@ -5,6 +5,7 @@ namespace Feeder\Core\Models;
 use Feeder\Core\Enums\CourierReceiptImportRowMatchResult;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class CourierReceiptImportRow extends Model
 {
@@ -22,6 +23,12 @@ class CourierReceiptImportRow extends Model
         'raw_delivery_charge',
         'collected_cod',
         'delivery_charge',
+        'gross_remittance_amount',
+        'courier_charge_amount',
+        'net_remittance_amount',
+        'remittance_currency',
+        'remittance_business_date',
+        'remittance_provided_fields',
         'match_result',
         'matched_order_id',
         'matched_shipment_id',
@@ -30,6 +37,8 @@ class CourierReceiptImportRow extends Model
         'matched_supplier_label',
         'order_status_snapshot',
         'message',
+        'applied_at',
+        'applied_by',
     ];
 
     protected function casts(): array
@@ -39,6 +48,12 @@ class CourierReceiptImportRow extends Model
             'row_number' => 'integer',
             'collected_cod' => 'decimal:2',
             'delivery_charge' => 'decimal:2',
+            'gross_remittance_amount' => 'decimal:2',
+            'courier_charge_amount' => 'decimal:2',
+            'net_remittance_amount' => 'decimal:2',
+            'remittance_business_date' => 'date',
+            'remittance_provided_fields' => 'array',
+            'applied_at' => 'datetime',
         ];
     }
 
@@ -60,5 +75,10 @@ class CourierReceiptImportRow extends Model
     public function matchedSupplier(): BelongsTo
     {
         return $this->belongsTo(User::class, 'matched_supplier_id');
+    }
+
+    public function remittanceApplication(): HasOne
+    {
+        return $this->hasOne(CourierRemittanceApplication::class, 'courier_receipt_import_row_id');
     }
 }

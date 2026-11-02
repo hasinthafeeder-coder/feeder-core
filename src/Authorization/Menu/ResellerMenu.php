@@ -33,7 +33,7 @@ class ResellerMenu
         $menu->addSection(
             MenuSection::make('ORDERS')
                 // Title "Orders" is replaced in the reseller layout by ui-sidebar-orders:
-                // New Orders (Create / Import), Call Center, Ongoing, Archived.
+                // New Orders (Create / Import), Call Center, Ongoing, Completed, Archived.
                 ->addItem(
                     MenuItem::make('Orders')
                         ->icon('shopping_cart')
@@ -56,6 +56,10 @@ class ResellerMenu
                                 ->permission('orders.view'),
 
                             MenuItem::make('Ongoing Orders')
+                                ->route('orders.index')
+                                ->permission('orders.view'),
+
+                            MenuItem::make('Completed Orders')
                                 ->route('orders.index')
                                 ->permission('orders.view'),
 
@@ -125,13 +129,25 @@ class ResellerMenu
         /*
         |--------------------------------------------------------------------------
         | ACCOUNT
-        | Customers / Payouts / Reports menu entries are omitted until their
-        | reseller portal routes and UI are implemented.
+        | Customers / Reports menu entries remain omitted until implemented.
+        | Financial Overview and Settlement Invoices show this reseller's own records.
         |--------------------------------------------------------------------------
         */
 
         $menu->addSection(
             MenuSection::make('ACCOUNT')
+                ->addItem(
+                    MenuItem::make('Financial Overview')
+                        ->icon('monitoring')
+                        ->route('finance.overview')
+                        ->permission('dashboard.view')
+                )
+                ->addItem(
+                    MenuItem::make('Settlement Invoices')
+                        ->icon('receipt_long')
+                        ->route('settlements.invoices.index')
+                        ->permission('dashboard.view')
+                )
                 ->addItem(
                     MenuItem::make('My Profile')
                         ->icon('account_circle')

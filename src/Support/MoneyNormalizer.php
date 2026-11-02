@@ -50,6 +50,15 @@ class MoneyNormalizer
 
     public function tryNormalizeNonNegative(mixed $amount): ?string
     {
+        return $this->tryNormalizeAmount($amount, false);
+    }
+
+    /**
+     * Two-decimal normalization. Blank input returns null.
+     * Negative values are accepted only when $allowNegative is true.
+     */
+    public function tryNormalizeAmount(mixed $amount, bool $allowNegative = false): ?string
+    {
         if ($amount === null) {
             return null;
         }
@@ -64,7 +73,7 @@ class MoneyNormalizer
         }
 
         $value = (float) $string;
-        if ($value < 0 || $value > 100000000000) {
+        if ((! $allowNegative && $value < 0) || abs($value) > 100000000000) {
             return null;
         }
 
@@ -84,5 +93,43 @@ class MoneyNormalizer
     public function equals(string $left, string $right): bool
     {
         return number_format((float) $left, 2, '.', '') === number_format((float) $right, 2, '.', '');
+    }
+
+    /**
+     * Decimal-safe multiplication for payable lines (unit cost × quantity).
+     */
+    public function multiply(string $amount, int|string $multiplier): string
+    {
+        $normalizedAmount = $this->normalizeNonNegative($amount, 'amount');
+        $factor = trim((string) $multiplier);
+
+        if ($factor === '' || ! is_numeric($factor) || str_contains($factor, 'e') || str_contains($factor, 'E')) {
+            throw ValidationException::withMessages([
+                'quantity' => ['Quantity must be a valid non-negative number.'],
+            ]);
+        }
+
+        if ((float) $factor < 0) {
+            throw ValidationException::withMessages([
+                'quantity' => ['Quantity cannot be negative.'],
+            ]);
+        }
+
+        if (function_exists('bcmul')) {
+            return bcmul($normalizedAmount, $factor, 2);
+        }
+
+        return number_format((float) $normalizedAmount * (float) $factor, 2, '.', '');
+    }
+
+    public function isPositive(string $amount): bool
+    {
+        $normalized = number_format((float) $amount, 2, '.', '');
+
+        if (function_exists('bccomp')) {
+            return bccomp($normalized, '0.00', 2) === 1;
+        }
+
+        return (float) $normalized > 0;
     }
 }

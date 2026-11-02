@@ -11,8 +11,11 @@ use Feeder\Core\Models\CourierService;
 use Feeder\Core\Models\Order;
 use Feeder\Core\Models\Shipment;
 use Feeder\Core\Models\User;
-use Feeder\Core\Services\Order\OrderStatusService;
+use Feeder\Core\Exceptions\ResellerEarningObligationException;
+use Feeder\Core\Services\Order\SupplierReturnScanService;
+use Feeder\Core\Services\Settlement\ResellerEarningObligationService;
 use Feeder\Core\Support\MoneyNormalizer;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -23,19 +26,31 @@ use Throwable;
 /**
  * Admin courier invoice upload → reconciliation preview → confirmation.
  *
- * Preview never mutates order status. Confirmation may only transition eligible
- * DISPATCHED orders to DELIVERED via OrderStatusService and persist import
- * processing results. It must not alter totals, courier charges, stock,
- * payment statuses, or settlements.
+ * Preview never mutates order status. Confirmation processes every matched row
+ * in one transaction. An explicit DELIVERED status is applied through
+ * CourierRemittanceApplicationService. Any other non-empty courier status is
+ * returned through SupplierReturnScanService. A blocked import changes nothing.
+ * Delivered orders may receive an idempotent reseller earning obligation.
+ * Confirmation does not record supplier or reseller settlement payments.
+ *
+ * Courier fee source rule: Feeder never uses invoice delivery-charge columns
+ * (or operator-entered delivery_charge totals) as the courier fee. Preview
+ * courier_charge and booking fees resolve from shipment.courier_fee_snapshot /
+ * order.courier_fee_amount, which were calculated from
+ * CourierMarketPricing.first_kg_fee via CourierFeeCalculator at booking time.
  */
 class CourierReceiptImportService
 {
     public function __construct(
         private readonly CourierReceiptInvoiceParserResolver $parserResolver,
+        private readonly CourierReceiptInvoiceFileSummaryBuilder $fileSummaryBuilder,
         private readonly CourierReceiptImportMatcher $matcher,
         private readonly CourierReceiptImportReconciler $reconciler,
         private readonly MoneyNormalizer $money,
-        private readonly OrderStatusService $orderStatusService,
+        private readonly ResellerEarningObligationService $earningObligationService,
+        private readonly CourierRemittanceApplicationService $remittanceApplications,
+        private readonly CourierRemittanceColumnExtractor $remittanceColumns,
+        private readonly SupplierReturnScanService $returns,
     ) {}
 
     /**
@@ -112,6 +127,21 @@ class CourierReceiptImportService
     }
 
     /**
+     * Read-only invoice totals for Step 3. Parses the selected CSV or XLSX
+     * and does not store an import or change orders.
+     *
+     * @return array{file_summary: array<string, mixed>}
+     */
+    public function summarizeUploadedFile(CourierService $courierService, UploadedFile $file): array
+    {
+        $parser = $this->parserResolver->forCourierService($courierService);
+
+        return [
+            'file_summary' => $this->fileSummaryBuilder->fromParsed($parser->parse($file)),
+        ];
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function uploadAndPreview(
@@ -169,7 +199,6 @@ class CourierReceiptImportService
             ->where('entered_order_count', $orderCount)
             ->where('entered_total_collected_cod', $enteredCod)
             ->where('entered_delivery_charge', $enteredCharge)
-            ->where('status', CourierReceiptImportStatus::PREVIEWED)
             ->first();
 
         if ($existing !== null) {
@@ -178,6 +207,7 @@ class CourierReceiptImportService
 
         // Parse before any persistence / storage write (no DB locks during parse).
         $parsed = $parser->parse($file);
+        $fileSummary = $this->fileSummaryBuilder->fromParsed($parsed);
         $matchedRows = $this->matcher->matchRows($courierService, $parsed['rows']);
         $reconciliation = $this->reconciler->reconcile(
             $matchedRows,
@@ -188,6 +218,9 @@ class CourierReceiptImportService
             (bool) $parsed['file_has_cod_amounts'],
             (bool) $parsed['file_has_delivery_charges'],
         );
+        $reconciliationNotes = $reconciliation['reconciliation_notes'];
+        $reconciliationNotes['file_summary'] = $fileSummary;
+        $reconciliationNotes['remittance_totals_by_currency'] = $this->remittanceColumns->totalsByCurrency($matchedRows);
 
         $storedPath = null;
 
@@ -206,6 +239,7 @@ class CourierReceiptImportService
                 $enteredCharge,
                 $enteredNetIncome,
                 $reconciliation,
+                $reconciliationNotes,
                 $matchedRows,
                 $storedPath,
             ): CourierReceiptImport {
@@ -229,6 +263,7 @@ class CourierReceiptImportService
                     'previously_processed_count' => $reconciliation['previously_processed_count'],
                     'service_mismatch_count' => $reconciliation['service_mismatch_count'],
                     'invalid_count' => $reconciliation['invalid_count'],
+                    'already_applied_count' => $reconciliation['already_applied_count'],
                     'file_has_cod_amounts' => (bool) $parsed['file_has_cod_amounts'],
                     'file_has_delivery_charges' => (bool) $parsed['file_has_delivery_charges'],
                     'imported_cod_total' => $reconciliation['imported_cod_total'],
@@ -238,7 +273,7 @@ class CourierReceiptImportService
                     'delivery_charge_totals_match' => $reconciliation['delivery_charge_totals_match'],
                     'net_income_consistent' => $reconciliation['net_income_consistent'],
                     'totals_reconcile' => $reconciliation['totals_reconcile'],
-                    'reconciliation_notes' => $reconciliation['reconciliation_notes'],
+                    'reconciliation_notes' => $reconciliationNotes,
                     'status' => CourierReceiptImportStatus::PREVIEWED,
                 ]);
 
@@ -253,6 +288,12 @@ class CourierReceiptImportService
                         'raw_delivery_charge' => $row['raw_delivery_charge'],
                         'collected_cod' => $row['collected_cod'],
                         'delivery_charge' => $row['delivery_charge'],
+                        'gross_remittance_amount' => $row['gross_remittance_amount'] ?? null,
+                        'courier_charge_amount' => $row['courier_charge_amount'] ?? null,
+                        'net_remittance_amount' => $row['net_remittance_amount'] ?? null,
+                        'remittance_currency' => $row['remittance_currency'] ?? null,
+                        'remittance_business_date' => $row['remittance_business_date'] ?? null,
+                        'remittance_provided_fields' => $row['remittance_provided_fields'] ?? null,
                         'match_result' => $row['match_result'],
                         'matched_order_id' => $row['matched_order_id'],
                         'matched_shipment_id' => $row['matched_shipment_id'],
@@ -305,6 +346,10 @@ class CourierReceiptImportService
      */
     public function confirm(User $admin, CourierReceiptImport $import): array
     {
+        // One confirmation applies every matched row, then records earnings.
+        // PHP's default 30 second limit aborts that work and rolls the transaction back.
+        set_time_limit(0);
+
         $importId = (int) $import->id;
 
         try {
@@ -342,6 +387,7 @@ class CourierReceiptImportService
                 $locked->loadMissing(['rows', 'courierService']);
 
                 $deliveredCount = 0;
+                $returnedCount = 0;
                 $skippedCount = 0;
                 $ineligibleCount = 0;
                 $rowOutcomes = [];
@@ -352,26 +398,80 @@ class CourierReceiptImportService
 
                     match ($outcome['outcome']) {
                         'delivered' => $deliveredCount++,
+                        'returned' => $returnedCount++,
                         'ineligible' => $ineligibleCount++,
                         default => $skippedCount++,
                     };
                 }
 
+                $confirmationSummary = [
+                    'delivered_count' => $deliveredCount,
+                    'returned_count' => $returnedCount,
+                    'skipped_count' => $skippedCount,
+                    'ineligible_count' => $ineligibleCount,
+                ];
+
                 $locked->forceFill([
                     'status' => CourierReceiptImportStatus::CONFIRMED,
                     'confirmed_at' => now(),
+                    'confirmed_by' => (int) $admin->id,
+                    'confirmation_summary' => $confirmationSummary,
                     'failure_reason' => null,
                 ])->save();
 
+                // Record earnings only after the import is CONFIRMED so eligibility
+                // evidence checks see authoritative remittance confirmation.
+                $locked->loadMissing('rows');
+                foreach ($rowOutcomes as $outcome) {
+                    if (($outcome['outcome'] ?? null) !== 'delivered' || empty($outcome['order_id'])) {
+                        continue;
+                    }
+
+                    $row = $locked->rows->firstWhere('row_number', (int) $outcome['row_number']);
+                    if ($row === null) {
+                        continue;
+                    }
+
+                    $deliveredOrder = Order::query()
+                        ->with(['items', 'market', 'currency', 'shipment'])
+                        ->find((int) $outcome['order_id']);
+
+                    if ($deliveredOrder === null) {
+                        continue;
+                    }
+
+                    // Hard earning-persistence failures must abort the outer transaction.
+                    // Do not catch-and-continue: a confirmed import must not commit when
+                    // unexpected earning persistence fails. Expected non-calculable
+                    // exclusions are returned as skipped by the earning service.
+                    $this->earningObligationService->recordEarningForConfirmedDelivery(
+                        $deliveredOrder,
+                        $locked,
+                        $row,
+                        (int) $admin->id,
+                    );
+                }
+
                 return [
                     'delivered_count' => $deliveredCount,
+                    'returned_count' => $returnedCount,
                     'skipped_count' => $skippedCount,
                     'ineligible_count' => $ineligibleCount,
                     'row_outcomes' => $rowOutcomes,
+                    'confirmation_summary' => $confirmationSummary,
                 ];
             });
         } catch (ValidationException $exception) {
             throw $exception;
+        } catch (ResellerEarningObligationException $exception) {
+            $this->persistConfirmationFailure($importId, $exception);
+
+            throw ValidationException::withMessages([
+                'import' => [
+                    'Confirmation failed and was rolled back because reseller earning '
+                    .'recording could not complete: '.$this->safeFailureMessage($exception),
+                ],
+            ]);
         } catch (Throwable $exception) {
             $this->persistConfirmationFailure($importId, $exception);
 
@@ -382,23 +482,153 @@ class CourierReceiptImportService
             ]);
         }
 
-        $preview = $this->serializePreview(
-            CourierReceiptImport::query()
-                ->with(['rows', 'courierService.courier'])
-                ->findOrFail($importId)
-        );
+        $confirmedImport = CourierReceiptImport::query()
+            ->with(['rows', 'courierService.courier', 'confirmer.profile', 'uploader.profile'])
+            ->findOrFail($importId);
+
+        $preview = $this->serializePreview($confirmedImport);
 
         return [
             'import' => $preview['import'],
             'rows' => $preview['rows'],
-            'mutated_orders' => $result['delivered_count'] > 0,
+            'mutated_orders' => $result['delivered_count'] > 0 || $result['returned_count'] > 0,
+            'applied' => false,
             'confirmation' => [
                 'status' => CourierReceiptImportStatus::CONFIRMED->value,
                 'delivered_count' => $result['delivered_count'],
+                'returned_count' => $result['returned_count'],
                 'skipped_count' => $result['skipped_count'],
                 'ineligible_count' => $result['ineligible_count'],
                 'row_outcomes' => $result['row_outcomes'],
             ],
+        ];
+    }
+
+    /**
+     * Explicitly apply one matched remittance row.
+     *
+     * @return array<string, mixed>
+     */
+    public function applyRow(User $admin, CourierReceiptImport $import, int $rowNumber): array
+    {
+        unset($admin, $rowNumber);
+
+        $import->refresh();
+
+        throw ValidationException::withMessages([
+            'import' => [
+                'Individual rows cannot be applied. Confirm import '.$import->uuid
+                .' to process every matched row in one transaction.',
+            ],
+        ]);
+    }
+
+    /**
+     * Paginated courier invoice import history for the Admin payment update page.
+     *
+     * Newest confirmed imports first. Previewed and failed uploads stay off this list.
+     * Does not expose private storage paths.
+     *
+     * @return LengthAwarePaginator<int, CourierReceiptImport>
+     */
+    public function paginateImportHistory(int $perPage = 15): LengthAwarePaginator
+    {
+        $perPage = max(1, min(100, $perPage));
+
+        return CourierReceiptImport::query()
+            ->with(['courierService.courier'])
+            ->where('status', CourierReceiptImportStatus::CONFIRMED)
+            ->orderByDesc('confirmed_at')
+            ->orderByDesc('id')
+            ->paginate($perPage)
+            ->withQueryString()
+            ->fragment('courier-import-history');
+    }
+
+    /**
+     * Read-only HTML summary payload for a courier receipt import.
+     *
+     * @return array<string, mixed>
+     */
+    public function getSummaryPageData(User $admin, CourierReceiptImport $import): array
+    {
+        unset($admin); // Admin authorization is enforced at the HTTP layer.
+
+        $import = $import->fresh([
+            'rows',
+            'courierService.courier',
+            'uploader.profile',
+            'confirmer.profile',
+        ]);
+
+        if ($import === null) {
+            throw ValidationException::withMessages([
+                'import' => ['The courier receipt import was not found.'],
+            ]);
+        }
+
+        $preview = $this->serializePreview($import);
+        $confirmationSummary = is_array($import->confirmation_summary)
+            ? $import->confirmation_summary
+            : [];
+
+        return [
+            'import' => $import,
+            'preview' => $preview['import'],
+            'rows' => $preview['rows'],
+            'confirmation' => [
+                'delivered_count' => (int) ($confirmationSummary['delivered_count'] ?? 0),
+                'returned_count' => (int) ($confirmationSummary['returned_count'] ?? 0),
+                'skipped_count' => (int) ($confirmationSummary['skipped_count'] ?? 0),
+                'ineligible_count' => (int) ($confirmationSummary['ineligible_count'] ?? 0),
+            ],
+            'uploader_label' => $this->formatUserLabel($import->uploader),
+            'confirmer_label' => $this->formatUserLabel($import->confirmer),
+        ];
+    }
+
+    /**
+     * Resolve the original uploaded invoice for download from the import's stored_path.
+     * Never accepts a client-provided filesystem path or filename as the storage path.
+     *
+     * @return array{absolute_path: string, download_filename: string}|null
+     */
+    public function resolveOriginalInvoiceDownload(CourierReceiptImport $import): ?array
+    {
+        $storedPath = trim((string) ($import->stored_path ?? ''));
+
+        if (! $this->isSafePrivateStoredRelativePath($storedPath)) {
+            return null;
+        }
+
+        $disk = Storage::disk('local');
+
+        if (! $disk->exists($storedPath)) {
+            return null;
+        }
+
+        $absolutePath = $disk->path($storedPath);
+        $realPath = realpath($absolutePath);
+        $diskRoot = realpath($disk->path(''));
+
+        if ($realPath === false || $diskRoot === false || ! is_file($realPath)) {
+            return null;
+        }
+
+        $diskRootPrefix = rtrim(str_replace('\\', '/', $diskRoot), '/').'/';
+        $normalizedRealPath = str_replace('\\', '/', $realPath);
+
+        if (! str_starts_with($normalizedRealPath, $diskRootPrefix)
+            && $normalizedRealPath !== rtrim($diskRootPrefix, '/')) {
+            return null;
+        }
+
+        return [
+            'absolute_path' => $realPath,
+            'download_filename' => $this->safeDownloadFilename(
+                (string) ($import->original_filename ?? ''),
+                (string) ($import->file_type ?? '')
+            ),
         ];
     }
 
@@ -420,6 +650,44 @@ class CourierReceiptImportService
 
         $matchValue = $matchResult?->value ?? (string) $row->getRawOriginal('match_result');
 
+        if ($this->reportOutcome($row) === CourierReportOutcomeClassifier::RETURNED) {
+            return $this->confirmReturnRow($admin, $import, $row, $matchValue);
+        }
+
+        $application = $this->remittanceApplications->apply($admin, $import, $row);
+
+        $outcome = match ($application['outcome']) {
+            'applied', 'already_applied' => 'delivered',
+            'ineligible' => 'ineligible',
+            default => 'skipped',
+        };
+
+        return [
+            'row_number' => (int) $row->row_number,
+            'match_result' => $matchValue,
+            'order_id' => $application['order_id'],
+            'order_number' => $application['order_number'] ?? $row->matched_order_number,
+            'outcome' => $outcome,
+            'message' => $application['message'],
+        ];
+    }
+
+    /**
+     * @return array{
+     *     row_number: int,
+     *     match_result: string,
+     *     outcome: string,
+     *     order_id: int|null,
+     *     order_number: string|null,
+     *     message: string
+     * }
+     */
+    private function confirmReturnRow(
+        User $admin,
+        CourierReceiptImport $import,
+        CourierReceiptImportRow $row,
+        string $matchValue,
+    ): array {
         $base = [
             'row_number' => (int) $row->row_number,
             'match_result' => $matchValue,
@@ -427,91 +695,49 @@ class CourierReceiptImportService
             'order_number' => $row->matched_order_number,
         ];
 
-        if ($matchResult !== CourierReceiptImportRowMatchResult::MATCHED) {
-            return array_merge($base, [
-                'outcome' => 'skipped',
-                'message' => 'Row match result is '.$matchValue.'; no delivery transition applied.',
-            ]);
+        if ($matchValue !== CourierReceiptImportRowMatchResult::MATCHED->value) {
+            return $base + [
+                'outcome' => $matchValue === CourierReceiptImportRowMatchResult::INVALID->value ? 'ineligible' : 'skipped',
+                'message' => 'Return row is '.$matchValue.' and was not processed.',
+            ];
         }
 
-        $orderId = (int) ($row->matched_order_id ?? 0);
-        $shipmentId = (int) ($row->matched_shipment_id ?? 0);
-        $tracking = trim((string) ($row->normalized_tracking_number ?? ''));
-
-        if ($orderId <= 0 || $shipmentId <= 0 || $tracking === '') {
-            return array_merge($base, [
-                'outcome' => 'ineligible',
-                'message' => 'Stored match evidence is incomplete; no delivery transition applied.',
-            ]);
-        }
-
-        $order = Order::query()->find($orderId);
+        $order = Order::query()->find((int) $row->matched_order_id);
         if ($order === null) {
-            return array_merge($base, [
+            return $base + [
                 'outcome' => 'ineligible',
-                'message' => 'Matched order no longer exists; no delivery transition applied.',
-            ]);
+                'order_id' => null,
+                'message' => 'Matched order no longer exists. The return was not processed.',
+            ];
         }
 
-        $shipment = Shipment::query()->find($shipmentId);
-        if ($shipment === null) {
-            return array_merge($base, [
-                'outcome' => 'ineligible',
-                'order_number' => $order->order_number,
-                'message' => 'Matched shipment no longer exists; no delivery transition applied.',
-            ]);
-        }
+        $result = $this->returns->markReturnedFromCourierReport($order, (int) $admin->id);
 
-        if ((int) $shipment->order_id !== (int) $order->id) {
-            return array_merge($base, [
-                'outcome' => 'ineligible',
-                'order_number' => $order->order_number,
-                'message' => 'Shipment no longer belongs to the matched order; no delivery transition applied.',
-            ]);
-        }
+        $row->forceFill([
+            'applied_at' => now(),
+            'applied_by' => (int) $admin->id,
+            'message' => $result['already_returned']
+                ? 'Return already recorded. Stock and fine were not applied again. Import '.$import->uuid.'.'
+                : 'Returned through the courier report on import '.$import->uuid.'.',
+        ])->save();
 
-        if ((int) $shipment->courier_service_id !== (int) $import->courier_service_id) {
-            return array_merge($base, [
-                'outcome' => 'ineligible',
-                'order_number' => $order->order_number,
-                'message' => 'Shipment courier service no longer matches this import; no delivery transition applied.',
-            ]);
-        }
+        return $base + [
+            'outcome' => 'returned',
+            'order_id' => $result['id'],
+            'message' => $result['already_returned']
+                ? 'Order was already RETURNED. No further stock or fine change was made.'
+                : 'Order transitioned DISPATCHED → RETURNED.',
+        ];
+    }
 
-        if (trim((string) $shipment->tracking_number) !== $tracking) {
-            return array_merge($base, [
-                'outcome' => 'ineligible',
-                'order_number' => $order->order_number,
-                'message' => 'Shipment tracking number no longer matches import evidence; no delivery transition applied.',
-            ]);
-        }
+    private function reportOutcome(CourierReceiptImportRow $row): string
+    {
+        $fields = $row->remittance_provided_fields;
+        $outcome = is_array($fields) ? ($fields['report_outcome'] ?? null) : null;
 
-        $status = $order->status instanceof OrderStatus
-            ? $order->status
-            : OrderStatus::from((string) $order->status);
-
-        if ($status !== OrderStatus::DISPATCHED) {
-            return array_merge($base, [
-                'outcome' => 'ineligible',
-                'order_number' => $order->order_number,
-                'message' => 'Order is '.$status->value.' at confirmation; only DISPATCHED orders may be delivered.',
-            ]);
-        }
-
-        $this->orderStatusService->transition(
-            $order,
-            OrderStatus::DELIVERED,
-            (int) $admin->id,
-            null,
-            'Courier receipt import confirmation ('.$import->uuid.')',
-            null,
-        );
-
-        return array_merge($base, [
-            'outcome' => 'delivered',
-            'order_number' => $order->order_number,
-            'message' => 'Order transitioned DISPATCHED → DELIVERED.',
-        ]);
+        return $outcome === CourierReportOutcomeClassifier::RETURNED
+            ? CourierReportOutcomeClassifier::RETURNED
+            : CourierReportOutcomeClassifier::DELIVERED;
     }
 
     private function persistConfirmationFailure(int $importId, Throwable $exception): void
@@ -541,7 +767,7 @@ class CourierReceiptImportService
      */
     private function serializePreview(CourierReceiptImport $import): array
     {
-        $import->loadMissing(['rows', 'courierService.courier']);
+        $import->loadMissing(['rows.remittanceApplication', 'courierService.courier']);
 
         $courierName = $import->courierService?->courier?->name
             ?? $import->courierService?->name
@@ -585,7 +811,7 @@ class CourierReceiptImportService
         $rows = $import->rows
             ->sortBy('row_number')
             ->values()
-            ->map(function (CourierReceiptImportRow $row) use ($courierName, $orders, $shipments, $importConfirmed): array {
+            ->map(function (CourierReceiptImportRow $row) use ($courierName, $orders, $shipments, $import, $importConfirmed): array {
                 $result = $row->match_result;
                 $resultValue = $result?->value ?? (string) $row->getRawOriginal('match_result');
                 $waybill = $row->normalized_tracking_number ?? $row->raw_tracking_number ?? '—';
@@ -605,6 +831,7 @@ class CourierReceiptImportService
                 $orderAmount = null;
                 $courierCharge = null;
                 $courierStatus = null;
+                $liveStatus = null;
 
                 if ($order instanceof Order) {
                     $orderNumber = (string) ($order->order_number ?: ($row->matched_order_number ?? '—'));
@@ -624,14 +851,24 @@ class CourierReceiptImportService
                     $courierStatus = $row->order_status_snapshot;
                 }
 
+                $application = $row->remittanceApplication;
+                $reportOutcome = $this->reportOutcome($row);
+                // Row apply is disabled. Confirmation is the only mutating action.
+                $canApply = false;
+
                 $orderOutcome = match ($resultValue) {
                     'MATCHED' => $importConfirmed
-                        ? (($order instanceof Order && (is_object($order->status) ? $order->status->value : (string) $order->status) === OrderStatus::DELIVERED->value)
-                            ? 'Confirmed — DISPATCHED → DELIVERED'
-                            : 'Confirmed — no delivery transition (order was not eligible at confirmation)')
-                        : 'Would become DISPATCHED → DELIVERED on confirmation (not applied in preview)',
+                        ? match ($liveStatus) {
+                            OrderStatus::DELIVERED->value => 'Confirmed — DISPATCHED → DELIVERED',
+                            OrderStatus::RETURNED->value => 'Confirmed — DISPATCHED → RETURNED',
+                            default => 'Confirmed — no status transition (order was not eligible at confirmation)',
+                        }
+                        : ($reportOutcome === CourierReportOutcomeClassifier::RETURNED
+                            ? 'Eligible for confirmation as RETURNED. Upload did not change the order.'
+                            : 'Eligible for confirmation as DELIVERED. Upload did not change the order.'),
+                    'ALREADY_APPLIED' => 'Already applied — previous remittance evidence kept',
                     'PREVIOUSLY_PROCESSED' => 'Already terminal — no order change',
-                    'SKIPPED' => 'Skipped non-DELIVERED status — no order change',
+                    'SKIPPED' => 'Skipped — no order change',
                     default => 'Review required — no order change',
                 };
 
@@ -650,6 +887,20 @@ class CourierReceiptImportService
                     'match_result' => $resultValue,
                     'order_outcome' => $orderOutcome,
                     'message' => $row->message,
+                    'can_apply' => $canApply,
+                    'file_gross_remittance' => $row->gross_remittance_amount !== null
+                        ? (string) $row->gross_remittance_amount
+                        : null,
+                    'file_courier_charge' => $row->courier_charge_amount !== null
+                        ? (string) $row->courier_charge_amount
+                        : null,
+                    'file_net_remittance' => $row->net_remittance_amount !== null
+                        ? (string) $row->net_remittance_amount
+                        : null,
+                    'remittance_currency' => $row->remittance_currency,
+                    'remittance_business_date' => $row->remittance_business_date?->toDateString(),
+                    'applied_at' => $row->applied_at?->toIso8601String(),
+                    'application_uuid' => $application?->uuid,
                     // Import-row financials retained for non-delivery-status formats only;
                     // UI must not present these as Feeder order amount / courier charge.
                     'collected_cod' => $row->collected_cod,
@@ -670,6 +921,10 @@ class CourierReceiptImportService
         ], true)
             || (! $import->file_has_cod_amounts && ! $import->file_has_delivery_charges);
 
+        $confirmationSummary = is_array($import->confirmation_summary)
+            ? $import->confirmation_summary
+            : [];
+
         return [
             'import' => [
                 'id' => $import->uuid,
@@ -681,6 +936,8 @@ class CourierReceiptImportService
                 'courier_service_name' => $courierName,
                 'created_at' => $import->created_at?->toIso8601String(),
                 'confirmed_at' => $import->confirmed_at?->toIso8601String(),
+                'confirmed_by' => $import->confirmed_by !== null ? (int) $import->confirmed_by : null,
+                'confirmed_by_label' => $this->formatUserLabel($import->confirmer),
                 'failure_reason' => $import->failure_reason,
                 'delivery_status_import' => $isDeliveryStatusImport,
                 'pagination' => [
@@ -702,8 +959,16 @@ class CourierReceiptImportService
                     'previously_processed' => $import->previously_processed_count,
                     'service_mismatch' => $import->service_mismatch_count,
                     'invalid' => $import->invalid_count,
+                    'already_applied' => $import->already_applied_count,
                     'skipped' => $skippedCount,
                 ],
+                'file_summary' => $this->fileSummaryBuilder->fromImport($import),
+                'confirmation_summary' => $importConfirmed ? [
+                    'delivered_count' => (int) ($confirmationSummary['delivered_count'] ?? 0),
+                    'returned_count' => (int) ($confirmationSummary['returned_count'] ?? 0),
+                    'skipped_count' => (int) ($confirmationSummary['skipped_count'] ?? 0),
+                    'ineligible_count' => (int) ($confirmationSummary['ineligible_count'] ?? 0),
+                ] : null,
                 'reconciliation' => [
                     'file_has_cod_amounts' => $import->file_has_cod_amounts,
                     'file_has_delivery_charges' => $import->file_has_delivery_charges,
@@ -721,11 +986,35 @@ class CourierReceiptImportService
                     'notes' => $import->reconciliation_notes['notes'] ?? [],
                     'confirmation_blocked_reasons' => $import->reconciliation_notes['confirmation_blocked_reasons'] ?? [],
                     'confirmation_rules_next_stage' => $import->reconciliation_notes['confirmation_rules_next_stage'] ?? [],
+                    'remittance_totals_by_currency' => $import->reconciliation_notes['remittance_totals_by_currency'] ?? [
+                        'by_currency' => [],
+                        'unspecified_currency_row_count' => 0,
+                    ],
                 ],
             ],
             'rows' => $rows,
             'mutated_orders' => false,
         ];
+    }
+
+    private function formatUserLabel(?User $user): string
+    {
+        if ($user === null) {
+            return '—';
+        }
+
+        $user->loadMissing('profile');
+        $first = trim((string) ($user->profile?->first_name ?? ''));
+        $last = trim((string) ($user->profile?->last_name ?? ''));
+        $name = trim($first.' '.$last);
+
+        if ($name !== '') {
+            return $name;
+        }
+
+        $email = trim((string) ($user->email ?? ''));
+
+        return $email !== '' ? $email : '—';
     }
 
     private function formatMoney(mixed $amount): ?string
@@ -758,6 +1047,40 @@ class CourierReceiptImportService
 
         if ($name === '' || $name === '.' || $name === '..') {
             return 'courier-payment-file';
+        }
+
+        return mb_substr($name, 0, 255);
+    }
+
+    /**
+     * Defend against path traversal: only relative private-disk keys are allowed.
+     */
+    private function isSafePrivateStoredRelativePath(string $storedPath): bool
+    {
+        if ($storedPath === '' || str_contains($storedPath, "\0")) {
+            return false;
+        }
+
+        $normalized = str_replace('\\', '/', $storedPath);
+
+        if (str_starts_with($normalized, '/')
+            || preg_match('/^[a-zA-Z]:\//', $normalized) === 1
+            || str_contains($normalized, '..')) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function safeDownloadFilename(string $originalFilename, string $fileType): string
+    {
+        $name = basename(str_replace(["\0", '\\', '/'], '', $originalFilename));
+        $name = trim($name);
+
+        if ($name === '' || $name === '.' || $name === '..') {
+            $extension = preg_replace('/[^a-z0-9]/', '', strtolower($fileType)) ?: 'bin';
+
+            return 'courier-payment-invoice.'.$extension;
         }
 
         return mb_substr($name, 0, 255);

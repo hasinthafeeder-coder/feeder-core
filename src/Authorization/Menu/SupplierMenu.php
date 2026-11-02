@@ -16,6 +16,12 @@ class SupplierMenu
                         ->route('dashboard')
                         ->permission('dashboard.view')
                 )
+                ->addItem(
+                    MenuItem::make('Financial Overview')
+                        ->icon('monitoring')
+                        ->route('finance.overview')
+                        ->permission('dashboard.view')
+                )
         );
 
         $menu->addSection(
@@ -54,6 +60,30 @@ class SupplierMenu
                     MenuItem::make('Packing Orders')
                         ->icon('package_2')
                         ->route('orders.ui.packaging')
+                        ->permission('orders.view')
+                )
+                ->addItem(
+                    MenuItem::make('Dispatch Orders')
+                        ->icon('local_shipping')
+                        ->route('orders.ui.dispatch')
+                        ->permission('orders.view')
+                )
+                ->addItem(
+                    MenuItem::make('Completed Orders')
+                        ->icon('task_alt')
+                        ->route('orders.ui.completed')
+                        ->permission('orders.view')
+                )
+                ->addItem(
+                    MenuItem::make('Archived Orders')
+                        ->icon('inventory_2')
+                        ->route('orders.ui.archived')
+                        ->permission('orders.view')
+                )
+                ->addItem(
+                    MenuItem::make('Dispatch Summary')
+                        ->icon('summarize')
+                        ->route('orders.ui.dispatch-summary')
                         ->permission('orders.view')
                 )
         );

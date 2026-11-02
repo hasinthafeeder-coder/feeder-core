@@ -9,9 +9,13 @@ use Illuminate\Validation\ValidationException;
 /**
  * Native Fardar delivery-report CSV invoice parser.
  *
- * Processes Delivered rows only. Matching uses Waybill ID →
- * shipments.tracking_number scoped to the selected courier service.
- * Invoice Order ID and financial columns are ignored.
+ * Matching uses Waybill ID → shipments.tracking_number scoped to the
+ * selected courier service. An exact Delivered status is a delivery. Any
+ * other non-empty Delivery Status is a return. An empty Delivery Status is ambiguous.
+ * Invoice Order ID is ignored for matching.
+ * Amount and Delivery Fee are stored as remittance evidence when present.
+ * COD Commission and Return Fee are retained as source fields and are not
+ * subtracted into the net. Order Date and Last Scan Date are not remittance dates.
  */
 class FardarInvoiceParser implements CourierReceiptInvoiceParser
 {
@@ -111,8 +115,19 @@ class FardarInvoiceParser implements CourierReceiptInvoiceParser
                 continue;
             }
 
-            $normalizedStatus = $this->normalizeStatus($statusRaw);
-            $eligible = $normalizedStatus === 'DELIVERED';
+            $classification = (new CourierReportOutcomeClassifier())->classify($statusRaw);
+            $remittance = (new CourierRemittanceColumnExtractor())->extract($headerMap, $cells, [
+                'gross' => ['amount'],
+                'charge' => ['delivery fee'],
+                'currency' => ['currency'],
+                'business_date' => ['business date', 'remittance date', 'payment date'],
+                'extras' => [
+                    'source_order_date' => ['order date'],
+                    'source_last_scan_at' => ['last scan date'],
+                    'cod_commission' => ['cod commission'],
+                    'return_fee' => ['return fee'],
+                ],
+            ]);
 
             $rows[] = [
                 'row_number' => $rowNumber,
@@ -123,13 +138,11 @@ class FardarInvoiceParser implements CourierReceiptInvoiceParser
                 'delivery_charge' => null,
                 'notes' => $statusRaw,
                 'invoice_status' => $statusRaw,
-                'eligible_for_matching' => $eligible,
-                'skip_reason' => $eligible
-                    ? null
-                    : 'Delivery Status is '
-                        .($statusRaw !== '' ? $statusRaw : '(empty)')
-                        .'; only Delivered rows are processed.',
-            ];
+                'eligible_for_matching' => ! $classification['ambiguous'],
+                'status_ambiguous' => $classification['ambiguous'],
+                'report_outcome' => $classification['outcome'],
+                'skip_reason' => $classification['reason'],
+            ] + $remittance;
         }
 
         if ($rows === []) {
@@ -188,14 +201,6 @@ class FardarInvoiceParser implements CourierReceiptInvoiceParser
         $header = preg_replace('/\s+/', ' ', $header) ?? $header;
 
         return $header;
-    }
-
-    private function normalizeStatus(string $status): string
-    {
-        $status = strtoupper(trim($status));
-        $status = preg_replace('/\s+/', ' ', $status) ?? $status;
-
-        return $status;
     }
 
     /**

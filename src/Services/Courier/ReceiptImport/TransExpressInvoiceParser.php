@@ -9,9 +9,12 @@ use Illuminate\Validation\ValidationException;
 /**
  * Native TransExpress delivery-report invoice parser.
  *
- * Processes Delivered rows only. Matching uses Waybill ID →
- * shipments.tracking_number scoped to the selected courier service.
- * Invoice Order No, Invoice No, and financial columns are ignored.
+ * Matching uses Waybill ID → shipments.tracking_number scoped to the
+ * selected courier service. An exact Delivered status is a delivery. Any
+ * other non-empty Order Status is a return. An empty Order Status is ambiguous.
+ * Invoice Order No and Invoice No are ignored for matching.
+ * Collected COD, Delivery Charge, and Payable are stored as remittance
+ * evidence when present. Order Date is not treated as a remittance date.
  */
 class TransExpressInvoiceParser implements CourierReceiptInvoiceParser
 {
@@ -110,8 +113,17 @@ class TransExpressInvoiceParser implements CourierReceiptInvoiceParser
                 continue;
             }
 
-            $normalizedStatus = $this->normalizeStatus($statusRaw);
-            $eligible = $normalizedStatus === 'DELIVERED';
+            $classification = (new CourierReportOutcomeClassifier())->classify($statusRaw);
+            $remittance = (new CourierRemittanceColumnExtractor())->extract($headerMap, $cells, [
+                'gross' => ['collected cod'],
+                'charge' => ['delivery charge'],
+                'net' => ['payable'],
+                'currency' => ['currency'],
+                'business_date' => ['business date', 'remittance date', 'payment date'],
+                'extras' => [
+                    'source_order_date' => ['order date'],
+                ],
+            ]);
 
             $rows[] = [
                 'row_number' => $rowNumber,
@@ -122,13 +134,11 @@ class TransExpressInvoiceParser implements CourierReceiptInvoiceParser
                 'delivery_charge' => null,
                 'notes' => $statusRaw,
                 'invoice_status' => $statusRaw,
-                'eligible_for_matching' => $eligible,
-                'skip_reason' => $eligible
-                    ? null
-                    : 'Order Status is '
-                        .($statusRaw !== '' ? $statusRaw : '(empty)')
-                        .'; only Delivered rows are processed.',
-            ];
+                'eligible_for_matching' => ! $classification['ambiguous'],
+                'status_ambiguous' => $classification['ambiguous'],
+                'report_outcome' => $classification['outcome'],
+                'skip_reason' => $classification['reason'],
+            ] + $remittance;
         }
 
         if ($rows === []) {
@@ -187,14 +197,6 @@ class TransExpressInvoiceParser implements CourierReceiptInvoiceParser
         $header = preg_replace('/\s+/', ' ', $header) ?? $header;
 
         return $header;
-    }
-
-    private function normalizeStatus(string $status): string
-    {
-        $status = strtoupper(trim($status));
-        $status = preg_replace('/\s+/', ' ', $status) ?? $status;
-
-        return $status;
     }
 
     /**

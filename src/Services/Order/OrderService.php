@@ -14,6 +14,10 @@ use Feeder\Core\Models\OrderAddress;
 use Feeder\Core\Models\OrderItem;
 use Feeder\Core\Models\OrderStatusHistory;
 use Feeder\Core\Models\ProductVariant;
+use Feeder\Core\Models\User;
+use Feeder\Core\Services\Courier\CourierServiceFixedChargeService;
+use Feeder\Core\Services\ProductEligibilityService;
+use Feeder\Core\Services\ResellerServiceChargeService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -30,6 +34,9 @@ class OrderService
         private readonly OrderDiscountService $discountService,
         private readonly OrderPaymentReviewService $paymentReviewService,
         private readonly OrderNumberGenerator $orderNumberGenerator,
+        private readonly ResellerServiceChargeService $resellerServiceChargeService,
+        private readonly CourierServiceFixedChargeService $courierServiceFixedChargeService,
+        private readonly ProductEligibilityService $productEligibilityService,
     ) {
     }
 
@@ -119,7 +126,10 @@ class OrderService
             $draftCourier = $this->resolveDraftCourierSelection($payload);
 
             $customerPayable = round($itemsSubtotal - $discountAmount + $courierFeeAmount, 2);
+            $companyCommissionAmount = $this->sumCompanyCommissionFromLines($preparedItems['lines']);
 
+            // Provisional create-time snapshot for PENDING display / warnings.
+            // Authoritative after-hours decision is rewritten at CONFIRMED transition.
             $evaluatedAt = $payload['evaluated_at'] ?? null;
             if ($evaluatedAt !== null && ! $evaluatedAt instanceof CarbonImmutable) {
                 $evaluatedAt = CarbonImmutable::parse($evaluatedAt);
@@ -169,6 +179,14 @@ class OrderService
                 $availableInPool = false;
             }
 
+            $resellerServiceChargeSnapshot = $this->resolveResellerServiceChargeSnapshot(
+                resellerId: (int) $payload['reseller_id'],
+                market: $market,
+            );
+
+            $resellerCourierChargeSnapshot = $this->courierServiceFixedChargeService
+                ->resolveChargeForServiceId($draftCourier['draft_courier_service_id']);
+
             $order = Order::query()->create([
                 'source' => $source,
                 'order_type' => $orderType,
@@ -196,11 +214,13 @@ class OrderService
                 'items_subtotal' => $itemsSubtotal,
                 'discount_amount' => $discountAmount,
                 'courier_fee_amount' => $courierFeeAmount,
+                'reseller_service_charge_snapshot' => $resellerServiceChargeSnapshot,
+                'reseller_courier_charge_snapshot' => $resellerCourierChargeSnapshot,
                 'customer_payable_amount' => $customerPayable,
                 'total_weight' => $totalWeight,
                 'reseller_commission_amount' => round((float) ($payload['reseller_commission_amount'] ?? 0), 2),
                 'supplier_commission_amount' => round((float) ($payload['supplier_commission_amount'] ?? 0), 2),
-                'company_commission_amount' => round((float) ($payload['company_commission_amount'] ?? 0), 2),
+                'company_commission_amount' => $companyCommissionAmount,
                 'agent_commission_amount' => round((float) ($payload['agent_commission_amount'] ?? 0), 2),
                 'after_hours' => $afterHours['after_hours'],
                 'after_hours_warning_shown' => (bool) ($payload['after_hours_warning_shown'] ?? false),
@@ -340,6 +360,13 @@ class OrderService
                 marketId: $marketId,
             );
 
+            // Same product_variant_id keeps historical unit financial snapshots.
+            // New or replaced variants keep freshly captured live values.
+            $preparedItems['lines'] = $this->preserveExistingItemFinancialSnapshots(
+                $preparedItems['lines'],
+                $order->items,
+            );
+
             $itemsSubtotal = $preparedItems['items_subtotal'];
             $totalWeight = $preparedItems['total_weight'];
 
@@ -381,7 +408,14 @@ class OrderService
             $duplicateMeta = $this->resolveDuplicateMeta($duplicates, $payload);
 
             $customerPayable = round($itemsSubtotal - $discountAmount + $courierFeeAmount, 2);
+            $companyCommissionAmount = $this->sumCompanyCommissionFromLines($preparedItems['lines']);
             $actorId = $updatedBy ?? (isset($payload['updated_by']) ? (int) $payload['updated_by'] : null);
+
+            // Service charge is captured once at create and must not rewrite when
+            // Admin later changes the financial default. Courier fixed charge tracks
+            // the draft/assigned service until shipment booking finalizes it.
+            $resellerCourierChargeSnapshot = $this->courierServiceFixedChargeService
+                ->resolveChargeForServiceId($draftCourier['draft_courier_service_id']);
 
             $order->update([
                 'customer_id' => $customer->id,
@@ -398,8 +432,10 @@ class OrderService
                 'items_subtotal' => $itemsSubtotal,
                 'discount_amount' => $discountAmount,
                 'courier_fee_amount' => $courierFeeAmount,
+                'reseller_courier_charge_snapshot' => $resellerCourierChargeSnapshot,
                 'customer_payable_amount' => $customerPayable,
                 'total_weight' => $totalWeight,
+                'company_commission_amount' => $companyCommissionAmount,
                 'after_hours_warning_shown' => (bool) ($payload['after_hours_warning_shown'] ?? $order->after_hours_warning_shown),
                 'duplicate_warning_shown' => $duplicateMeta['duplicate_warning_shown']
                     ? true
@@ -565,7 +601,7 @@ class OrderService
         }
 
         return Order::query()
-            ->incomplete()
+            ->where('status', OrderStatus::DISPATCHED->value)
             ->where('customer_id', $customerId)
             ->whereHas('items', function ($query) use ($productVariantIds) {
                 $query->whereIn('product_variant_id', $productVariantIds);
@@ -670,6 +706,8 @@ class OrderService
                 ]);
             }
 
+            $this->productEligibilityService->assertVariantSellable($variant, 'product_variant_id');
+
             $quantity = (int) $item->quantity;
             $unitSellingPrice = round((float) $variant->selling_price, 2);
             $unitWeight = round((float) ($variant->weight ?? 0), 3);
@@ -692,6 +730,39 @@ class OrderService
 
             return $order->fresh($this->defaultRelations());
         });
+    }
+
+    /**
+     * Preserve unit cost and company commission snapshots for lines whose
+     * product_variant_id already exists on the order. Matching is strictly by
+     * variant id (variants are unique per order), so snapshots never transfer
+     * across distinct variants.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     * @param  \Illuminate\Support\Collection<int, OrderItem>|\Illuminate\Database\Eloquent\Collection<int, OrderItem>  $existingItems
+     * @return list<array<string, mixed>>
+     */
+    protected function preserveExistingItemFinancialSnapshots(array $lines, $existingItems): array
+    {
+        $existingByVariantId = [];
+
+        foreach ($existingItems as $item) {
+            $existingByVariantId[(int) $item->product_variant_id] = $item;
+        }
+
+        foreach ($lines as $index => $line) {
+            $variantId = (int) ($line['product_variant_id'] ?? 0);
+            $existing = $existingByVariantId[$variantId] ?? null;
+
+            if ($existing === null) {
+                continue;
+            }
+
+            $lines[$index]['unit_cost_snapshot'] = $existing->unit_cost_snapshot;
+            $lines[$index]['unit_company_commission_snapshot'] = $existing->unit_company_commission_snapshot;
+        }
+
+        return $lines;
     }
 
     /**
@@ -758,6 +829,11 @@ class OrderService
                     "items.{$index}.product_variant_id" => ['Product market must match the order market.'],
                 ]);
             }
+
+            $this->productEligibilityService->assertVariantSellable(
+                $variant,
+                "items.{$index}.product_variant_id"
+            );
 
             $unitSellingPrice = round((float) $item['unit_selling_price'], 2);
             $unitWeight = round((float) ($variant->weight ?? 0), 3);
@@ -859,15 +935,50 @@ class OrderService
         $totalWeight = round((float) $order->items->sum(fn (OrderItem $item) => (float) $item->line_weight_total), 3);
         $discountAmount = round((float) $order->discount_amount, 2);
         $courierFeeAmount = round((float) $order->courier_fee_amount, 2);
+        $companyCommissionAmount = round(
+            (float) $order->items->sum(
+                fn (OrderItem $item) => (float) $item->unit_company_commission_snapshot * (int) $item->quantity
+            ),
+            2
+        );
 
         $this->assertPayableAmounts($itemsSubtotal, $discountAmount, $courierFeeAmount);
 
         $order->update([
             'items_subtotal' => $itemsSubtotal,
             'total_weight' => $totalWeight,
+            'company_commission_amount' => $companyCommissionAmount,
             'customer_payable_amount' => round($itemsSubtotal - $discountAmount + $courierFeeAmount, 2),
             'updated_by' => $updatedBy,
         ]);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $lines
+     */
+    protected function sumCompanyCommissionFromLines(array $lines): float
+    {
+        $total = 0.0;
+
+        foreach ($lines as $line) {
+            $total = round(
+                $total + ((float) ($line['unit_company_commission_snapshot'] ?? 0) * (int) ($line['quantity'] ?? 0)),
+                2
+            );
+        }
+
+        return $total;
+    }
+
+    protected function resolveResellerServiceChargeSnapshot(int $resellerId, Market $market): string
+    {
+        $reseller = User::query()->find($resellerId);
+
+        if ($reseller === null) {
+            return $this->resellerServiceChargeService->getDefaultCharge($market);
+        }
+
+        return $this->resellerServiceChargeService->resolveServiceCharge($reseller, $market);
     }
 
     /**

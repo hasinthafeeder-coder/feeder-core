@@ -9,9 +9,12 @@ use Illuminate\Validation\ValidationException;
 /**
  * Native Royal Express delivery-report invoice parser.
  *
- * Processes DELIVERED rows only. Matching uses Waybill Number →
- * shipments.tracking_number scoped to the selected courier service.
- * Invoice Order Number and financial columns are ignored.
+ * Matching uses Waybill Number → shipments.tracking_number scoped to the
+ * selected courier service. An exact DELIVERED status is a delivery. Any
+ * other non-empty Status is a return. An empty Status is ambiguous.
+ * Invoice Order Number is ignored for matching.
+ * Collected COD and Delivery Charge are stored as remittance evidence when
+ * those columns are present. They are not the Feeder courier fee.
  */
 class RoyalExpressInvoiceParser implements CourierReceiptInvoiceParser
 {
@@ -110,8 +113,13 @@ class RoyalExpressInvoiceParser implements CourierReceiptInvoiceParser
                 continue;
             }
 
-            $normalizedStatus = $this->normalizeStatus($statusRaw);
-            $eligible = $normalizedStatus === 'DELIVERED';
+            $classification = (new CourierReportOutcomeClassifier())->classify($statusRaw);
+            $remittance = (new CourierRemittanceColumnExtractor())->extract($headerMap, $cells, [
+                'gross' => ['collected cod'],
+                'charge' => ['delivery charge'],
+                'currency' => ['currency'],
+                'business_date' => ['business date', 'remittance date', 'payment date'],
+            ]);
 
             $rows[] = [
                 'row_number' => $rowNumber,
@@ -122,13 +130,11 @@ class RoyalExpressInvoiceParser implements CourierReceiptInvoiceParser
                 'delivery_charge' => null,
                 'notes' => $statusRaw,
                 'invoice_status' => $statusRaw,
-                'eligible_for_matching' => $eligible,
-                'skip_reason' => $eligible
-                    ? null
-                    : 'Status is '
-                        .($statusRaw !== '' ? $statusRaw : '(empty)')
-                        .'; only DELIVERED rows are processed.',
-            ];
+                'eligible_for_matching' => ! $classification['ambiguous'],
+                'status_ambiguous' => $classification['ambiguous'],
+                'report_outcome' => $classification['outcome'],
+                'skip_reason' => $classification['reason'],
+            ] + $remittance;
         }
 
         if ($rows === []) {
@@ -187,14 +193,6 @@ class RoyalExpressInvoiceParser implements CourierReceiptInvoiceParser
         $header = preg_replace('/\s+/', ' ', $header) ?? $header;
 
         return $header;
-    }
-
-    private function normalizeStatus(string $status): string
-    {
-        $status = strtoupper(trim($status));
-        $status = preg_replace('/\s+/', ' ', $status) ?? $status;
-
-        return $status;
     }
 
     /**

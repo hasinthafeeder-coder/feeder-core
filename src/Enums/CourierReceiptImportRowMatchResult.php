@@ -12,6 +12,7 @@ enum CourierReceiptImportRowMatchResult: string
     case SERVICE_MISMATCH = 'SERVICE_MISMATCH';
     case INVALID = 'INVALID';
     case SKIPPED = 'SKIPPED';
+    case ALREADY_APPLIED = 'ALREADY_APPLIED';
 
     public function label(): string
     {
@@ -24,6 +25,7 @@ enum CourierReceiptImportRowMatchResult: string
             self::SERVICE_MISMATCH => 'Courier service mismatch',
             self::INVALID => 'Invalid',
             self::SKIPPED => 'Skipped',
+            self::ALREADY_APPLIED => 'Already applied',
         };
     }
 }

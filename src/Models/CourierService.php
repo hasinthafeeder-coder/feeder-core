@@ -19,12 +19,14 @@ class CourierService extends Model
         'code',
         'name',
         'external_service_id',
+        'reseller_fixed_charge',
         'is_active',
     ];
 
     protected function casts(): array
     {
         return [
+            'reseller_fixed_charge' => 'decimal:2',
             'is_active' => 'boolean',
         ];
     }

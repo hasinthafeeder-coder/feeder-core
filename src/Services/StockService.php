@@ -4,17 +4,21 @@ namespace Feeder\Core\Services;
 
 use Feeder\Core\Enums\StockReservationStatus;
 use Feeder\Core\Models\GoodsReceivedNoteItem;
+use Feeder\Core\Models\Order;
+use Feeder\Core\Models\ProductVariant;
 use Feeder\Core\Models\StockConsumption;
 use Feeder\Core\Models\StockReservation;
+use Feeder\Core\Models\StockRestoration;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 class StockService
 {
     /**
-     * Available stock = received - damaged - reserved(active) - consumed.
+     * Available stock = received - damaged - reserved(active) - consumed + restored.
      *
      * Preserves the historical remainingStock* API names used by stock list pages.
      */
@@ -94,6 +98,8 @@ class StockService
     }
 
     /**
+     * Gross historical consumption (not reduced by restorations).
+     *
      * @param  list<int>  $variantIds
      * @return array<int, int>
      */
@@ -113,13 +119,38 @@ class StockService
         return $this->fillMissingVariantTotals($variantIds, $totals);
     }
 
+    public function restoredQuantityForVariant(int $variantId): int
+    {
+        return $this->restoredQuantitiesForVariants([$variantId])[$variantId] ?? 0;
+    }
+
+    /**
+     * @param  list<int>  $variantIds
+     * @return array<int, int>
+     */
+    public function restoredQuantitiesForVariants(array $variantIds): array
+    {
+        if ($variantIds === []) {
+            return [];
+        }
+
+        $totals = StockRestoration::query()
+            ->select('product_variant_id')
+            ->selectRaw('COALESCE(SUM(quantity), 0) as restored_quantity')
+            ->whereIn('product_variant_id', $variantIds)
+            ->groupBy('product_variant_id')
+            ->pluck('restored_quantity', 'product_variant_id');
+
+        return $this->fillMissingVariantTotals($variantIds, $totals);
+    }
+
     public function availableQuantityForVariant(int $variantId): int
     {
         return $this->availableQuantitiesForVariants([$variantId])[$variantId] ?? 0;
     }
 
     /**
-     * AVAILABLE = RECEIVED - DAMAGED - RESERVED - CONSUMED
+     * AVAILABLE = RECEIVED - DAMAGED - RESERVED - CONSUMED + RESTORED
      *
      * @param  list<int>  $variantIds
      * @return array<int, int>
@@ -133,6 +164,7 @@ class StockService
         $physical = $this->physicalAvailableQuantitiesForVariants($variantIds);
         $reserved = $this->reservedQuantitiesForVariants($variantIds);
         $consumed = $this->consumedQuantitiesForVariants($variantIds);
+        $restored = $this->restoredQuantitiesForVariants($variantIds);
 
         $available = [];
 
@@ -142,6 +174,7 @@ class StockService
                 (int) ($physical[$variantId] ?? 0)
                 - (int) ($reserved[$variantId] ?? 0)
                 - (int) ($consumed[$variantId] ?? 0)
+                + (int) ($restored[$variantId] ?? 0)
             );
         }
 
@@ -194,7 +227,7 @@ class StockService
     /**
      * Full stock breakdown for a variant.
      *
-     * @return array{received: int, damaged: int, reserved: int, consumed: int, available: int}
+     * @return array{received: int, damaged: int, reserved: int, consumed: int, restored: int, available: int}
      */
     public function stockBreakdownForVariant(int $variantId): array
     {
@@ -202,21 +235,106 @@ class StockService
         $damaged = $this->damagedQuantityForVariant($variantId);
         $reserved = $this->reservedQuantityForVariant($variantId);
         $consumed = $this->consumedQuantityForVariant($variantId);
+        $restored = $this->restoredQuantityForVariant($variantId);
 
         return [
             'received' => $received,
             'damaged' => $damaged,
             'reserved' => $reserved,
             'consumed' => $consumed,
-            'available' => max(0, $received - $damaged - $reserved - $consumed),
+            'restored' => $restored,
+            'available' => max(0, $received - $damaged - $reserved - $consumed + $restored),
         ];
+    }
+
+    /**
+     * Restore stock for quantities previously consumed by an order.
+     *
+     * Creates one stock_restorations row per stock_consumptions row using the
+     * recorded consumption quantity. Idempotent: existing restorations are reused.
+     * Must run inside a database transaction that already holds the order row lock.
+     *
+     * @return list<array{
+     *     restoration_id: int,
+     *     stock_consumption_id: int,
+     *     order_item_id: int,
+     *     product_variant_id: int,
+     *     quantity: int
+     * }>
+     */
+    public function restoreConsumptionsForOrder(Order $order, ?int $restoredBy = null): array
+    {
+        $consumptions = StockConsumption::query()
+            ->where('order_id', $order->id)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        if ($consumptions->isEmpty()) {
+            throw new RuntimeException(
+                'Cannot restore stock: dispatched order has no stock consumption records.'
+            );
+        }
+
+        $variantIds = $consumptions
+            ->pluck('product_variant_id')
+            ->map(static fn ($id) => (int) $id)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
+
+        ProductVariant::query()
+            ->whereIn('id', $variantIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        $rows = [];
+
+        foreach ($consumptions as $consumption) {
+            $quantity = (int) $consumption->quantity;
+
+            if ($quantity < 1) {
+                throw new RuntimeException(
+                    'Cannot restore stock: consumption quantity must be at least 1.'
+                );
+            }
+
+            $restoration = StockRestoration::query()
+                ->where('stock_consumption_id', $consumption->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($restoration === null) {
+                $restoration = StockRestoration::query()->create([
+                    'order_id' => $order->id,
+                    'order_item_id' => $consumption->order_item_id,
+                    'product_variant_id' => $consumption->product_variant_id,
+                    'stock_consumption_id' => $consumption->id,
+                    'quantity' => $quantity,
+                    'restored_by' => $restoredBy,
+                    'restored_at' => now(),
+                ]);
+            }
+
+            $rows[] = [
+                'restoration_id' => (int) $restoration->id,
+                'stock_consumption_id' => (int) $consumption->id,
+                'order_item_id' => (int) $consumption->order_item_id,
+                'product_variant_id' => (int) $consumption->product_variant_id,
+                'quantity' => (int) $restoration->quantity,
+            ];
+        }
+
+        return $rows;
     }
 
     /**
      * Correlated scalar subquery: available stock for the current product_variants row.
      * Used by StockListService filters/list pages.
      *
-     * AVAILABLE = RECEIVED - DAMAGED - RESERVED - CONSUMED
+     * AVAILABLE = RECEIVED - DAMAGED - RESERVED - CONSUMED + RESTORED
      */
     public function remainingStockSubquery(): QueryBuilder
     {
@@ -240,6 +358,11 @@ class StockService
                     SELECT SUM(sc.quantity)
                     FROM stock_consumptions AS sc
                     WHERE sc.product_variant_id = product_variants.id
+                ), 0)
+                + COALESCE((
+                    SELECT SUM(sx.quantity)
+                    FROM stock_restorations AS sx
+                    WHERE sx.product_variant_id = product_variants.id
                 ), 0)
             )',
             [StockReservationStatus::ACTIVE->value]

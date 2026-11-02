@@ -4,6 +4,7 @@ namespace Feeder\Core\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Str;
 
 class StockConsumption extends Model
@@ -68,5 +69,10 @@ class StockConsumption extends Model
     public function consumedByUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'consumed_by');
+    }
+
+    public function restoration(): HasOne
+    {
+        return $this->hasOne(StockRestoration::class);
     }
 }

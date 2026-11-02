@@ -140,6 +140,12 @@ class MenuService
             return null;
         }
 
+        // Sidebar can only render a leaf route or a parent with children.
+        // Route-less parents with no remaining children must not linger as ghosts.
+        if (empty($filteredChildren) && $item->getRoute() === null) {
+            return null;
+        }
+
         return $item->copy()->children($filteredChildren);
     }
 }

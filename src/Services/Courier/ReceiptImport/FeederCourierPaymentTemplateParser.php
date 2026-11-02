@@ -107,6 +107,13 @@ class FeederCourierPaymentTemplateParser implements CourierReceiptInvoiceParser
                 $hasCharge = true;
             }
 
+            $remittance = (new CourierRemittanceColumnExtractor())->extract($headerMap, $cells, [
+                'gross' => ['collected_cod'],
+                'charge' => ['delivery_charge'],
+                'currency' => ['currency'],
+                'business_date' => ['business_date'],
+            ]);
+
             $rows[] = [
                 'row_number' => $rowNumber,
                 'tracking_number' => $this->cell($cells, $headerMap['tracking_number']),
@@ -114,7 +121,7 @@ class FeederCourierPaymentTemplateParser implements CourierReceiptInvoiceParser
                 'collected_cod' => $cod,
                 'delivery_charge' => $charge,
                 'notes' => $this->optionalCell($cells, $headerMap, 'notes') ?? '',
-            ];
+            ] + $remittance;
         }
 
         return [

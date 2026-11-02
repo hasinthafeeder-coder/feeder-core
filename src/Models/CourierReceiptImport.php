@@ -35,6 +35,7 @@ class CourierReceiptImport extends Model
         'previously_processed_count',
         'service_mismatch_count',
         'invalid_count',
+        'already_applied_count',
         'file_has_cod_amounts',
         'file_has_delivery_charges',
         'imported_cod_total',
@@ -48,6 +49,8 @@ class CourierReceiptImport extends Model
         'status',
         'failure_reason',
         'confirmed_at',
+        'confirmed_by',
+        'confirmation_summary',
     ];
 
     protected function casts(): array
@@ -66,6 +69,7 @@ class CourierReceiptImport extends Model
             'previously_processed_count' => 'integer',
             'service_mismatch_count' => 'integer',
             'invalid_count' => 'integer',
+            'already_applied_count' => 'integer',
             'file_has_cod_amounts' => 'boolean',
             'file_has_delivery_charges' => 'boolean',
             'imported_cod_total' => 'decimal:2',
@@ -77,6 +81,7 @@ class CourierReceiptImport extends Model
             'totals_reconcile' => 'boolean',
             'reconciliation_notes' => 'array',
             'confirmed_at' => 'datetime',
+            'confirmation_summary' => 'array',
         ];
     }
 
@@ -102,6 +107,11 @@ class CourierReceiptImport extends Model
     public function uploader(): BelongsTo
     {
         return $this->belongsTo(User::class, 'uploaded_by');
+    }
+
+    public function confirmer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'confirmed_by');
     }
 
     public function rows(): HasMany

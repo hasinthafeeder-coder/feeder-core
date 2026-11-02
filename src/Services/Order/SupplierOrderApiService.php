@@ -224,6 +224,65 @@ class SupplierOrderApiService
     }
 
     /**
+     * @param  array{
+     *     search?: string,
+     *     status?: string|null,
+     *     courier_id?: int|null,
+     *     date_from?: string|null,
+     *     date_to?: string|null,
+     *     page?: int,
+     *     per_page?: int
+     * }  $filters
+     * @return array{data: list<array<string, mixed>>, meta: array<string, mixed>}
+     */
+    public function listDispatch(int $supplierId, array $filters = []): array
+    {
+        $query = $this->queryService->dispatchOrdersQuery($supplierId);
+        $this->queryService->applyDispatchListFilters($query, $filters);
+
+        $orders = $query->with([
+            'items',
+            'fulfillment',
+            'shipment.courier',
+            'statusHistories',
+        ])->get();
+
+        $presented = $orders->map(fn (Order $order) => $this->presentDispatchOrder($order))->values()->all();
+
+        $payload = $this->paginatePresentedList(
+            $presented,
+            $filters,
+            $this->filterOptionsForList($supplierId, $filters, 'dispatch'),
+        );
+
+        $payload['meta']['summary_counts'] = $this->dispatchSummaryCounts($supplierId);
+
+        return $payload;
+    }
+
+    /**
+     * @return array{dispatched: int, returned_today: int}
+     */
+    public function dispatchSummaryCounts(int $supplierId): array
+    {
+        $this->authorizationGuard->assertSupplierActor($supplierId);
+
+        $dispatched = $this->queryService->dispatchOrdersQuery($supplierId)
+            ->where('status', OrderStatus::DISPATCHED->value)
+            ->count();
+
+        $returnedToday = $this->queryService->dispatchOrdersQuery($supplierId)
+            ->where('status', OrderStatus::RETURNED->value)
+            ->whereDate('returned_at', now()->toDateString())
+            ->count();
+
+        return [
+            'dispatched' => $dispatched,
+            'returned_today' => $returnedToday,
+        ];
+    }
+
+    /**
      * @param  list<int>  $orderIds
      * @return list<array<string, mixed>>
      */
@@ -869,8 +928,30 @@ class SupplierOrderApiService
                 $supplierId,
                 SupplierFulfillmentStatus::PACKAGING
             ),
+            'dispatch' => $this->queryService->dispatchOrdersQuery($supplierId),
             default => $this->derivedInStockFreshOrdersQuery($supplierId),
         };
+
+        if ($list === 'dispatch') {
+            $this->queryService->applyDispatchListFilters($query, [
+                'search' => $scopedFilters['search'],
+                'date_from' => $scopedFilters['date_from'],
+                'date_to' => $scopedFilters['date_to'],
+                'status' => null,
+                'courier_id' => null,
+            ]);
+
+            $orders = $query->with([
+                'items',
+                'fulfillment',
+                'shipment.courier',
+                'statusHistories',
+            ])->get();
+
+            $presented = $orders->map(fn (Order $order) => $this->presentDispatchOrder($order))->values()->all();
+
+            return $this->buildFilterOptions($presented);
+        }
 
         $this->queryService->applyListFilters($query, $scopedFilters);
 
@@ -929,6 +1010,60 @@ class SupplierOrderApiService
         return [
             'products' => $productList,
             'couriers' => $courierList,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function presentDispatchOrder(Order $order): array
+    {
+        $status = $order->status instanceof OrderStatus
+            ? $order->status
+            : OrderStatus::from((string) $order->status);
+
+        $dispatchedAt = $order->statusHistories
+            ->filter(static function ($history) {
+                $to = $history->to_status instanceof OrderStatus
+                    ? $history->to_status
+                    : OrderStatus::tryFrom((string) $history->to_status);
+
+                return $to === OrderStatus::DISPATCHED;
+            })
+            ->sortBy('created_at')
+            ->first()
+            ?->created_at;
+
+        $codAmount = $order->customer_payable_amount !== null
+            ? number_format((float) $order->customer_payable_amount, 2, '.', ',')
+            : null;
+
+        return [
+            'id' => $order->id,
+            'uuid' => $order->uuid,
+            'order_number' => $order->order_number,
+            'customer_name' => $order->customer_name_snapshot,
+            'primary_phone' => $order->primary_phone_snapshot,
+            'courier_id' => $order->shipment?->courier_id,
+            'courier' => $order->shipment?->courier?->name,
+            'waybill' => $order->shipment?->tracking_number,
+            'tracking_number' => $order->shipment?->tracking_number,
+            'invoice_number' => $order->fulfillment?->invoice_number,
+            'cod_amount' => $codAmount,
+            'currency_code' => $order->currency_code_snapshot,
+            'status' => $status->value,
+            'dispatched_at' => $dispatchedAt?->format('d M Y, H:i'),
+            'dispatched_date' => $dispatchedAt?->toDateString(),
+            'updated_at' => $order->updated_at?->format('d M Y, H:i'),
+            'returned_at' => $order->returned_at?->format('d M Y, H:i'),
+            'items' => $order->items->map(fn ($item) => [
+                'order_item_id' => $item->id,
+                'product_id' => $item->product_id,
+                'product_variant_id' => $item->product_variant_id,
+                'product_name' => $item->product_name_snapshot,
+                'variant' => $item->variant_name_snapshot,
+                'quantity' => (int) $item->quantity,
+            ])->values()->all(),
         ];
     }
 

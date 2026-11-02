@@ -28,14 +28,20 @@ class StockListService
             ->through(fn (ProductVariant $variant) => $this->attachRemainingStock($variant));
     }
 
-    public function paginateForSupplier(int $supplierId, ?string $search = null): LengthAwarePaginator
-    {
-        $query = $this->baseVariantQuery()
-            ->whereHas('product', fn (Builder $productQuery) => $productQuery->forSupplier($supplierId));
+    public function paginateForSupplier(
+        int $supplierId,
+        ?string $search = null,
+        string $stockStatus = '',
+    ): LengthAwarePaginator {
+        $query = $this->baseSupplierVariantQuery($supplierId);
 
         if ($search !== null && $search !== '') {
             $this->applySearchFilter($query, $search);
         }
+
+        // Filter via the already-selected remaining_stock expression. A second
+        // whereRaw stock subquery collides with selectSub bindings on count().
+        $this->applyRemainingStockStatusHaving($query, $stockStatus);
 
         return $query
             ->orderBy('products.name')
@@ -48,14 +54,15 @@ class StockListService
     /**
      * @return Collection<int, ProductVariant>
      */
-    public function listForSupplier(int $supplierId, ?string $search = null): Collection
+    public function listForSupplier(int $supplierId, ?string $search = null, string $stockStatus = ''): Collection
     {
-        $query = $this->baseVariantQuery()
-            ->whereHas('product', fn (Builder $productQuery) => $productQuery->forSupplier($supplierId));
+        $query = $this->baseSupplierVariantQuery($supplierId);
 
         if ($search !== null && $search !== '') {
             $this->applySearchFilter($query, $search);
         }
+
+        $this->applyRemainingStockStatusHaving($query, $stockStatus);
 
         return $query
             ->orderBy('products.name')
@@ -77,13 +84,14 @@ class StockListService
 
     public function supplierCounts(int $supplierId): array
     {
-        $baseQuery = ProductVariant::query()
+        // Count without selectSub so stock-status bindings stay unambiguous.
+        $baseQuery = fn () => ProductVariant::query()
             ->whereHas('product', fn (Builder $productQuery) => $productQuery->forSupplier($supplierId));
 
         return [
-            'all' => (clone $baseQuery)->count(),
-            'in_stock' => $this->stockService->applyStockStatusFilter(clone $baseQuery, 'in_stock')->count(),
-            'out_of_stock' => $this->stockService->applyStockStatusFilter(clone $baseQuery, 'out_of_stock')->count(),
+            'all' => $baseQuery()->count(),
+            'in_stock' => $this->stockService->applyStockStatusFilter($baseQuery(), 'in_stock')->count(),
+            'out_of_stock' => $this->stockService->applyStockStatusFilter($baseQuery(), 'out_of_stock')->count(),
         ];
     }
 
@@ -154,6 +162,12 @@ class StockListService
             ]);
     }
 
+    private function baseSupplierVariantQuery(int $supplierId): Builder
+    {
+        return $this->baseVariantQuery()
+            ->where('products.supplier_id', $supplierId);
+    }
+
     private function applyAdminFilters(
         Builder $query,
         Request $request,
@@ -192,6 +206,26 @@ class StockListService
                     });
                 });
         });
+    }
+
+    private function normalizeStockStatus(string $stockStatus): string
+    {
+        return in_array($stockStatus, ['in_stock', 'out_of_stock'], true) ? $stockStatus : '';
+    }
+
+    private function applyRemainingStockStatusHaving(Builder $query, string $stockStatus): Builder
+    {
+        $stockStatus = $this->normalizeStockStatus($stockStatus);
+
+        if ($stockStatus === 'in_stock') {
+            return $query->having('remaining_stock', '>', 0);
+        }
+
+        if ($stockStatus === 'out_of_stock') {
+            return $query->having('remaining_stock', '<=', 0);
+        }
+
+        return $query;
     }
 
     private function attachRemainingStock(ProductVariant $variant): ProductVariant

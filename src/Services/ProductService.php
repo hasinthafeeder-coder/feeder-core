@@ -20,6 +20,7 @@ class ProductService
     public function __construct(
         protected CompanyCommissionService $companyCommissionService,
         protected ProductVariantBarcodeGenerator $barcodeGenerator,
+        protected ProductApprovalService $productApprovalService,
     ) {
     }
     protected function generateUniqueSlug(string $value, ?int $ignoreId = null): string
@@ -64,14 +65,27 @@ class ProductService
         };
     }
 
+    /**
+     * @param  bool  $lockAdminFinancialFields  When true (supplier portal), company
+     *     commission cannot be set from the request, and existing variant costs
+     *     cannot be changed. New variants may still receive an initial cost.
+     */
     public function createProduct(
         array $productData,
         array $descriptions = [],
         array $variants = [],
         array $images = [],
-        ?array $guideline = null
+        ?array $guideline = null,
+        bool $lockAdminFinancialFields = false,
     ): Product {
-        return DB::transaction(function () use ($productData, $descriptions, $variants, $images, $guideline) {
+        return DB::transaction(function () use (
+            $productData,
+            $descriptions,
+            $variants,
+            $images,
+            $guideline,
+            $lockAdminFinancialFields
+        ) {
             unset($productData['market_id']);
 
             $status = $productData['status'] instanceof ProductStatus
@@ -103,7 +117,8 @@ class ProductService
             $this->syncVariants(
                 $product,
                 $this->applyPriceLockToVariants($variants, (bool) ($productData['price_locked'] ?? false)),
-                true
+                true,
+                $lockAdminFinancialFields
             );
             $this->syncImages($product, $images, true);
 
@@ -111,15 +126,34 @@ class ProductService
         });
     }
 
+    /**
+     * @param  bool  $lockAdminFinancialFields  When true (supplier portal), company
+     *     commission cannot be set from the request, and existing variant costs
+     *     cannot be changed. New variants may still receive an initial cost.
+     * @param  bool  $markApproved  When true (explicit admin publish/activate only),
+     *     set approval_status to APPROVED. Ordinary saves must not rewrite historical
+     *     ACTIVE + null grandfather rows.
+     */
     public function updateProduct(
         Product $product,
         array $productData,
         array $descriptions = [],
         array $variants = [],
         array $images = [],
-        ?array $guideline = null
+        ?array $guideline = null,
+        bool $lockAdminFinancialFields = false,
+        bool $markApproved = false,
     ): Product {
-        return DB::transaction(function () use ($product, $productData, $descriptions, $variants, $images, $guideline) {
+        return DB::transaction(function () use (
+            $product,
+            $productData,
+            $descriptions,
+            $variants,
+            $images,
+            $guideline,
+            $lockAdminFinancialFields,
+            $markApproved
+        ) {
             unset($productData['supplier_id'], $productData['created_by'], $productData['uuid'], $productData['market_id']);
 
             $status = array_key_exists('status', $productData)
@@ -151,6 +185,16 @@ class ProductService
             }
 
             $product->fill($fill);
+
+            // Explicit admin publish/activate only — never on ordinary saves, so
+            // historical ACTIVE + null grandfather rows are left untouched.
+            if ($markApproved && ! $lockAdminFinancialFields && $status === ProductStatus::ACTIVE) {
+                $this->productApprovalService->markApprovedByAdminLifecycle(
+                    $product,
+                    isset($productData['updated_by']) ? (int) $productData['updated_by'] : null
+                );
+            }
+
             $product->save();
 
             $this->syncDescriptions($product, $descriptions);
@@ -160,7 +204,8 @@ class ProductService
                     $variants,
                     (bool) ($productData['price_locked'] ?? $product->price_locked)
                 ),
-                false
+                false,
+                $lockAdminFinancialFields
             );
             $this->syncImages($product, $images, false);
 
@@ -183,20 +228,27 @@ class ProductService
         return $product->refresh()->load($this->defaultRelations());
     }
 
-    public function activateProduct(Product $product, ?int $updatedBy = null): Product
+    public function activateProduct(Product $product, ?int $updatedBy = null, bool $markApproved = false): Product
     {
         if ($product->status !== ProductStatus::INACTIVE && $product->status !== ProductStatus::DRAFT) {
             return $product;
         }
 
-        $product->fill([
-            'status' => ProductStatus::ACTIVE,
-            'published_at' => $product->published_at ?? now(),
-            'updated_by' => $updatedBy ?? $product->supplier_id,
-        ]);
-        $product->save();
+        return DB::transaction(function () use ($product, $updatedBy, $markApproved): Product {
+            $product->fill([
+                'status' => ProductStatus::ACTIVE,
+                'published_at' => $product->published_at ?? now(),
+                'updated_by' => $updatedBy ?? $product->supplier_id,
+            ]);
 
-        return $product->refresh()->load($this->defaultRelations());
+            if ($markApproved) {
+                $this->productApprovalService->markApprovedByAdminLifecycle($product, $updatedBy);
+            }
+
+            $product->save();
+
+            return $product->refresh()->load($this->defaultRelations());
+        });
     }
 
     public function deleteProduct(Product $product): void
@@ -245,8 +297,12 @@ class ProductService
         }
     }
 
-    protected function syncVariants(Product $product, array $variants, bool $isCreate): void
-    {
+    protected function syncVariants(
+        Product $product,
+        array $variants,
+        bool $isCreate,
+        bool $lockAdminFinancialFields = false,
+    ): void {
         $retainedIds = [];
         $product->loadMissing('market');
         $market = $product->market;
@@ -268,6 +324,16 @@ class ProductService
                     ?: $this->barcodeGenerator->allocateNext((int) $product->market_id);
             } else {
                 $this->assertBarcodeMatchesMarket($barcode, $market, $index);
+            }
+
+            // Suppliers cannot change live cost on existing variants or set commission.
+            // New variants may receive an initial cost; commission always uses market default / existing.
+            if ($lockAdminFinancialFields) {
+                unset($variant['company_commission']);
+
+                if ($existing !== null) {
+                    $variant['cost'] = $existing->cost;
+                }
             }
 
             $attributes = [

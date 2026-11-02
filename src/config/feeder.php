@@ -24,6 +24,42 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Settlement scheduling (supplier + reseller)
+    |--------------------------------------------------------------------------
+    |
+    | Daily batch create+generate runs from the host app scheduler (feeder-admin).
+    | scheduled_actor_user_id is recorded as batches.generated_by for SCHEDULED runs.
+    | Supplier and reseller daily commands share this actor/time configuration.
+    | Monthly introducer bonus generation uses the same actor. Its clock is the
+    | westernmost configured market timezone, not schedule_timezone.
+    |
+    */
+    'settlement' => [
+        'scheduled_actor_user_id' => env('FEEDER_SETTLEMENT_SCHEDULED_ACTOR_USER_ID'),
+        'schedule_time' => env('FEEDER_SETTLEMENT_SCHEDULE_TIME', '23:30'),
+        'schedule_timezone' => env('FEEDER_SETTLEMENT_SCHEDULE_TIMEZONE', 'Asia/Colombo'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Introducer bonus own-order target
+    |--------------------------------------------------------------------------
+    |
+    | Production default is 1,000. Manual and scheduled generation both read
+    | monthly_own_order_target. FEEDER_INTRODUCER_BONUS_OWN_ORDER_TARGET is a
+    | temporary testing override. Restore production by removing that
+    | environment variable. Do not change the default of 1,000 below.
+    |
+    */
+    'introducer_bonus' => [
+        'monthly_own_order_target' => (int) env(
+            'FEEDER_INTRODUCER_BONUS_OWN_ORDER_TARGET',
+            \Feeder\Core\Services\IntroducerBonus\IntroducerBonusMonthlySettlementService::TARGET_OWN_ORDERS,
+        ),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Courier credentials encryption
     |--------------------------------------------------------------------------
     |

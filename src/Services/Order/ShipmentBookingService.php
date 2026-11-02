@@ -11,6 +11,7 @@ use Feeder\Core\Models\Order;
 use Feeder\Core\Models\Shipment;
 use Feeder\Core\Models\ShipmentEvent;
 use Feeder\Core\Services\Courier\CourierBookingDefaults;
+use Feeder\Core\Services\Courier\CourierServiceFixedChargeService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Throwable;
@@ -22,6 +23,7 @@ class ShipmentBookingService
         private readonly OrderShipmentLockService $shipmentLockService,
         private readonly OrderAuthorizationGuard $authorizationGuard,
         private readonly OrderCourierLookupService $courierLookupService,
+        private readonly CourierServiceFixedChargeService $courierServiceFixedChargeService,
     ) {
     }
 
@@ -136,8 +138,16 @@ class ShipmentBookingService
                 'external_booking_ref' => $bookingResult['external_booking_ref'] ?? null,
             ]);
 
+            // Finalize reseller settlement courier charge from the booked service.
+            // Distinct from weight-based courier_fee_amount / shipment.courier_fee_snapshot.
+            // Unconfigured reseller_fixed_charge snapshots as null — booking still succeeds;
+            // never substitute zero. Settlement calculability is decided later from snapshots.
+            $resellerCourierCharge = $this->courierServiceFixedChargeService
+                ->resolveChargeForServiceId((int) $service->id);
+
             $order->update([
                 'courier_fee_amount' => $fee,
+                'reseller_courier_charge_snapshot' => $resellerCourierCharge,
                 'customer_payable_amount' => round(
                     (float) $order->items_subtotal - (float) $order->discount_amount + $fee,
                     2

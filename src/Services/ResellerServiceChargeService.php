@@ -36,10 +36,11 @@ class ResellerServiceChargeService
 
         $value = $this->settingsService->getForMarket(self::DEFAULT_KEY, $market->id);
 
+        // Admin may remove the market default (empty / cleared). Removed means no
+        // charge is applied for that market — never fall back to another market's
+        // currency amount (e.g. do not apply LKR 75 to MYR).
         if ($value === null || $value === '') {
-            throw ValidationException::withMessages([
-                'default_reseller_service_charge' => "Default reseller service charge is not configured for the {$market->name} market.",
-            ]);
+            return '0.00';
         }
 
         return $this->normalizeMoneyValue((string) $value);
@@ -58,7 +59,11 @@ class ResellerServiceChargeService
         $market = $this->resolveMarket($market);
         $this->assertMarketHasActiveCurrency($market);
 
-        $normalized = $this->normalizeMoneyValue($amount);
+        // Empty / cleared means Admin removed the charge for this market → 0.00.
+        // Persist zero explicitly so seedApprovedDefaults will not restore a prior default.
+        $normalized = ($amount === null || trim((string) $amount) === '')
+            ? '0.00'
+            : $this->normalizeMoneyValue($amount);
 
         $this->settingsService->setForMarket(
             self::DEFAULT_KEY,
@@ -71,11 +76,37 @@ class ResellerServiceChargeService
         return $normalized;
     }
 
+    /**
+     * Remove the market default so new orders resolve to 0.00 for that market.
+     * Existing order / earning / settlement snapshots are never rewritten.
+     */
+    public function clearDefaultCharge(Market|string $market): string
+    {
+        return $this->setDefaultCharge($market, '0.00');
+    }
+
     public function hasDefaultCharge(Market|string $market): bool
     {
         $market = $this->resolveMarket($market);
 
         return $this->settingsService->existsForMarket(self::DEFAULT_KEY, $market->id);
+    }
+
+    /**
+     * Seed market defaults that are not yet configured. Never overwrites an
+     * Admin-cleared or Admin-edited market setting.
+     */
+    public function seedApprovedDefaults(): void
+    {
+        foreach (self::MARKET_DEFAULTS as $marketCode => $amount) {
+            $market = Market::query()->where('code', $marketCode)->first();
+
+            if ($market === null || $this->hasDefaultCharge($market)) {
+                continue;
+            }
+
+            $this->setDefaultCharge($market, $amount);
+        }
     }
 
     public function getResellerOverride(User $reseller, Market|string $market): ?string

@@ -11,6 +11,7 @@ enum FileCategory: string
     case PRODUCT_IMAGE = 'PRODUCT_IMAGE';
     case PAYMENT_PROOF = 'PAYMENT_PROOF';
     case INVOICE = 'INVOICE';
+    case EXPENSE_DOCUMENT = 'EXPENSE_DOCUMENT';
 
     public function supportsThumbnail(): bool
     {

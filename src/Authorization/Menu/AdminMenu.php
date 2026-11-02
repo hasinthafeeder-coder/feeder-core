@@ -2,6 +2,9 @@
 
 namespace Feeder\Core\Authorization\Menu;
 
+use Feeder\Core\Enums\ProductApprovalStatus;
+use Feeder\Core\Models\Product;
+
 class AdminMenu
 {
     public static function build(): Menu
@@ -15,6 +18,12 @@ class AdminMenu
                         ->icon('dashboard')
                         ->route('dashboard')
                         ->permission('dashboard.view')
+                )
+                ->addItem(
+                    MenuItem::make('Financial Overview')
+                        ->icon('monitoring')
+                        ->route('finance.overview')
+                        ->permission('finance.overview.view')
                 )
         );
 
@@ -57,13 +66,76 @@ class AdminMenu
         $menu->addSection(
             MenuSection::make('PAYMENTS')
                 ->addItem(
-                    MenuItem::make('Generate Payments')
+                    MenuItem::make('Courier Payment Update')
                         ->icon('payments')
-                        ->permission('payments.generate')
+                        ->route('payments.courier.update')
+                        ->permission('orders.view')
+                )
+        );
+
+        $menu->addSection(
+            MenuSection::make('SETTLEMENTS')
+                ->addItem(
+                    MenuItem::make('Supplier Settlement')
+                        ->icon('account_balance_wallet')
+                        ->route('settlements.suppliers')
+                        ->permission('settlements.suppliers.view')
                         ->children([
-                            MenuItem::make('Courier Payment Generate')
-                                ->route('payments.courier.generate')
-                                ->permission('payments.courier.generate'),
+                            MenuItem::make('Payment Batches')
+                                ->route('settlements.suppliers.batches')
+                                ->permission('settlements.suppliers.view'),
+
+                            MenuItem::make('Supplier Payments')
+                                ->route('settlements.suppliers.payments')
+                                ->permission('settlements.suppliers.view'),
+
+                            MenuItem::make('Daily Generation')
+                                ->route('settlements.suppliers.daily-generation')
+                                ->permission('settlements.suppliers.generate')
+                                ->visible(fn ($user): bool => $user->hasPermission('settlements.suppliers.view')
+                                    && $user->hasPermission('settlements.suppliers.generate')),
+                        ])
+                )
+                ->addItem(
+                    MenuItem::make('Reseller Settlement')
+                        ->icon('handshake')
+                        ->route('settlements.resellers.batches')
+                        ->permission('settlements.resellers.view')
+                        ->children([
+                            MenuItem::make('Payment Batches')
+                                ->route('settlements.resellers.batches')
+                                ->permission('settlements.resellers.view'),
+
+                            MenuItem::make('Plus Report')
+                                ->route('settlements.resellers.plus-report')
+                                ->permission('settlements.resellers.view'),
+
+                            MenuItem::make('Minus Report')
+                                ->route('settlements.resellers.minus-report')
+                                ->permission('settlements.resellers.payments.view'),
+
+                            MenuItem::make('Daily Generation')
+                                ->route('settlements.resellers.daily-generation')
+                                ->permission('settlements.resellers.generate')
+                                ->visible(fn ($user): bool => $user->hasPermission('settlements.resellers.view')
+                                    && $user->hasPermission('settlements.resellers.generate')),
+                        ])
+                )
+                ->addItem(
+                    MenuItem::make('Introducer Bonus')
+                        ->icon('redeem')
+                        ->route('settlements.introducer-bonus.batches')
+                        ->permission('settlements.introducer_bonus.view')
+                        ->children([
+                            MenuItem::make('Bonus Generation')
+                                ->route('settlements.introducer-bonus.monthly-generation')
+                                ->permission('settlements.introducer_bonus.generate')
+                                ->visible(fn ($user): bool => $user->hasPermission('settlements.introducer_bonus.view')
+                                    && $user->hasPermission('settlements.introducer_bonus.generate')),
+
+                            MenuItem::make('Bonus Settlements')
+                                ->route('settlements.introducer-bonus.batches')
+                                ->permission('settlements.introducer_bonus.view'),
                         ])
                 )
         );
@@ -75,14 +147,6 @@ class AdminMenu
                         ->icon('account_balance_wallet')
                         ->permission('payouts.generate')
                         ->children([
-                            MenuItem::make('Reseller Payouts')
-                                ->route('payouts.resellers')
-                                ->permission('payouts.resellers'),
-
-                            MenuItem::make('Supplier Payouts')
-                                ->route('payouts.suppliers')
-                                ->permission('payouts.suppliers'),
-
                             MenuItem::make('Company Bonus Payouts')
                                 ->route('payouts.company-bonus')
                                 ->permission('payouts.company-bonus'),
@@ -118,6 +182,15 @@ class AdminMenu
                             MenuItem::make('Manage Products')
                                 ->route('products.index')
                                 ->permission('products.view'),
+
+                            MenuItem::make('Product Approvals')
+                                ->route('products.approvals.index')
+                                ->permission('products.review')
+                                ->badge(function () {
+                                    return Product::query()
+                                        ->where('approval_status', ProductApprovalStatus::PENDING_REVIEW)
+                                        ->count();
+                                }),
 
                             MenuItem::make('Barcode Test Sheet')
                                 ->route('products.barcode-test-sheet')
@@ -253,6 +326,12 @@ class AdminMenu
                         ->icon('account_balance')
                         ->route('settings.financial')
                         ->permission('settings.view')
+                )
+                ->addItem(
+                    MenuItem::make('Expenses')
+                        ->icon('receipt_long')
+                        ->route('expenses.index')
+                        ->permission('expenses.view')
                 )
         );
 

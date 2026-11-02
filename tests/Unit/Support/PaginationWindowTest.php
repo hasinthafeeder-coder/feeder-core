@@ -35,4 +35,22 @@ class PaginationWindowTest extends TestCase
             PaginationWindow::pages(19, 20)
         );
     }
+
+    public function test_compact_pages_show_both_ends_on_the_first_page(): void
+    {
+        $this->assertSame([1, 2, '...', 38, 39], PaginationWindow::compactPages(1, 39));
+    }
+
+    public function test_compact_pages_keep_the_current_page_between_the_ends(): void
+    {
+        $this->assertSame(
+            [1, 2, '...', 19, 20, 21, '...', 38, 39],
+            PaginationWindow::compactPages(20, 39)
+        );
+    }
+
+    public function test_compact_pages_list_every_page_when_the_list_is_short(): void
+    {
+        $this->assertSame([1, 2, 3, 4], PaginationWindow::compactPages(2, 4));
+    }
 }

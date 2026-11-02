@@ -55,6 +55,93 @@ class SupplierFulfillmentQueryService
         return $this->freshOrdersQuery($supplierId)->with(['items', 'fulfillment'])->get();
     }
 
+    /**
+     * Dispatch Orders queue: supplier-owned orders in DISPATCHED or RETURNED lifecycle status.
+     */
+    public function dispatchOrdersQuery(int $supplierId): Builder
+    {
+        $this->authorizationGuard->assertSupplierActor($supplierId);
+
+        return Order::query()
+            ->where('supplier_id', $supplierId)
+            ->whereIn('status', [
+                OrderStatus::DISPATCHED->value,
+                OrderStatus::RETURNED->value,
+            ])
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id');
+    }
+
+    /**
+     * Apply Dispatch Orders list filters (search / status / courier / dispatch-date range).
+     *
+     * Search includes order number, customer, phones, waybill, and invoice number.
+     * Date range is evaluated against the order's DISPATCHED status-history timestamp.
+     *
+     * @param  array{
+     *     search?: string,
+     *     status?: string|null,
+     *     courier_id?: int|null,
+     *     date_from?: string|null,
+     *     date_to?: string|null
+     * }  $filters
+     */
+    public function applyDispatchListFilters(Builder $query, array $filters): Builder
+    {
+        $search = trim((string) ($filters['search'] ?? ''));
+
+        if ($search !== '') {
+            $query->where(function (Builder $inner) use ($search): void {
+                $inner->where('order_number', 'like', '%'.$search.'%')
+                    ->orWhere('customer_name_snapshot', 'like', '%'.$search.'%')
+                    ->orWhere('primary_phone_snapshot', 'like', '%'.$search.'%')
+                    ->orWhere('secondary_phone_snapshot', 'like', '%'.$search.'%')
+                    ->orWhereHas('shipment', function (Builder $shipment) use ($search): void {
+                        $shipment->where('tracking_number', 'like', '%'.$search.'%');
+                    })
+                    ->orWhereHas('fulfillment', function (Builder $fulfillment) use ($search): void {
+                        $fulfillment->where('invoice_number', 'like', '%'.$search.'%');
+                    });
+            });
+        }
+
+        $status = strtoupper(trim((string) ($filters['status'] ?? '')));
+        if ($status === OrderStatus::DISPATCHED->value || $status === OrderStatus::RETURNED->value) {
+            $query->where('status', $status);
+        }
+
+        $courierId = isset($filters['courier_id']) ? (int) $filters['courier_id'] : 0;
+        if ($courierId > 0) {
+            $query->whereHas('shipment', function (Builder $shipment) use ($courierId): void {
+                $shipment->where('courier_id', $courierId);
+            });
+        }
+
+        $dateFrom = trim((string) ($filters['date_from'] ?? ''));
+        if ($dateFrom !== '') {
+            $query->whereExists(function ($sub) use ($dateFrom): void {
+                $sub->selectRaw('1')
+                    ->from('order_status_histories as osh_dispatch_from')
+                    ->whereColumn('osh_dispatch_from.order_id', 'orders.id')
+                    ->where('osh_dispatch_from.to_status', OrderStatus::DISPATCHED->value)
+                    ->whereDate('osh_dispatch_from.created_at', '>=', $dateFrom);
+            });
+        }
+
+        $dateTo = trim((string) ($filters['date_to'] ?? ''));
+        if ($dateTo !== '') {
+            $query->whereExists(function ($sub) use ($dateTo): void {
+                $sub->selectRaw('1')
+                    ->from('order_status_histories as osh_dispatch_to')
+                    ->whereColumn('osh_dispatch_to.order_id', 'orders.id')
+                    ->where('osh_dispatch_to.to_status', OrderStatus::DISPATCHED->value)
+                    ->whereDate('osh_dispatch_to.created_at', '<=', $dateTo);
+            });
+        }
+
+        return $query;
+    }
+
     public function ordersInStatusQuery(int $supplierId, SupplierFulfillmentStatus $status): Builder
     {
         $this->authorizationGuard->assertSupplierActor($supplierId);

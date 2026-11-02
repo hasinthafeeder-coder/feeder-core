@@ -96,6 +96,18 @@ class SettingsService
             ->exists();
     }
 
+    public function deleteForMarket(string $key, ?int $marketId): void
+    {
+        Setting::query()
+            ->where('key', $key)
+            ->when(
+                $marketId === null,
+                fn ($query) => $query->whereNull('market_id'),
+                fn ($query) => $query->where('market_id', $marketId)
+            )
+            ->delete();
+    }
+
     protected function normalizeValue(mixed $value): ?string
     {
         if ($value === null || $value === '') {

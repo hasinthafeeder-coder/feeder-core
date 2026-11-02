@@ -22,7 +22,9 @@ class File extends Model
     protected static function booted(): void
     {
         static::deleting(function (File $file): bool {
-            if ((string) $file->category === FileCategory::PAYMENT_PROOF->value) {
+            $category = (string) $file->category;
+
+            if ($category === FileCategory::PAYMENT_PROOF->value || $category === FileCategory::EXPENSE_DOCUMENT->value) {
                 return false;
             }
 

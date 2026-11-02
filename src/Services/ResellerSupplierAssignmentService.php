@@ -176,6 +176,37 @@ class ResellerSupplierAssignmentService
         });
     }
 
+    public function isActiveSupplierAccount(int $supplierId): bool
+    {
+        if ($supplierId <= 0) {
+            return false;
+        }
+
+        return $this->eligibleSupplierQuery()->whereKey($supplierId)->exists();
+    }
+
+    /**
+     * @param  list<int>  $supplierIds
+     * @return list<int>
+     */
+    public function activeSupplierIds(array $supplierIds): array
+    {
+        $supplierIds = array_values(array_unique(array_filter(
+            array_map(static fn (mixed $id): int => (int) $id, $supplierIds),
+            static fn (int $id): bool => $id > 0,
+        )));
+        if ($supplierIds === []) {
+            return [];
+        }
+
+        return $this->eligibleSupplierQuery()
+            ->whereIn('id', $supplierIds)
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+    }
+
     protected function eligibleSupplierQuery(): Builder
     {
         return User::query()

@@ -2,11 +2,13 @@
 
 namespace Feeder\Core\Services\Referral;
 
+use Feeder\Core\Enums\UserStatus;
 use Feeder\Core\Enums\UserType;
 use Feeder\Core\Models\ReferralCode;
 use Feeder\Core\Models\ReferralRelationship;
 use Feeder\Core\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -472,7 +474,7 @@ class ReferralService
         for ($attempt = 0; $attempt < 25; $attempt++) {
             $code = strtoupper(Str::random(8));
 
-            if (! ReferralCode::query()->where('code', $code)->exists()) {
+            if (! ReferralCode::withTrashed()->where('code', $code)->exists()) {
                 return $code;
             }
         }
@@ -482,26 +484,86 @@ class ReferralService
 
     public function ensureUserHasReferralCode(User $user): ReferralCode
     {
-        $referralCode = $user->referralCode()->first();
+        $current = ReferralCode::withTrashed()->where('user_id', $user->id)->first();
 
-        if ($referralCode) {
-            return $referralCode;
+        if ($current !== null && ! $current->trashed()) {
+            return $current;
         }
 
         return DB::transaction(function () use ($user): ReferralCode {
-            $existing = $user->referralCode()->first();
+            $existing = ReferralCode::withTrashed()
+                ->where('user_id', $user->id)
+                ->lockForUpdate()
+                ->first();
 
-            if ($existing) {
-                return $existing;
+            if ($existing !== null) {
+                return $this->restoreReferralCode($existing, $user);
             }
 
-            return $user->referralCode()->create([
-                'uuid' => (string) Str::uuid(),
-                'code' => $this->generateUniqueCode(),
-                'is_active' => true,
-                'user_id' => $user->id,
-            ]);
+            try {
+                $created = $user->referralCode()->create([
+                    'uuid' => (string) Str::uuid(),
+                    'code' => $this->generateUniqueCode(),
+                    'is_active' => true,
+                    'user_id' => $user->id,
+                ]);
+            } catch (UniqueConstraintViolationException $exception) {
+                $winner = ReferralCode::withTrashed()
+                    ->where('user_id', $user->id)
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($winner === null) {
+                    throw $exception;
+                }
+
+                return $this->restoreReferralCode($winner, $user);
+            }
+
+            $user->unsetRelation('referralCode');
+
+            return $created;
         });
+    }
+
+    /**
+     * Issue a referral registration code to an active reseller owner.
+     *
+     * Restores a soft-deleted code for that owner. Does not create or change
+     * referral relationships, and does not change the code's active flag.
+     */
+    public function ensureEligibleResellerHasReferralCode(User $user): ?ReferralCode
+    {
+        if (! $this->isEligibleIntroducerReseller($user)) {
+            return null;
+        }
+
+        return $this->ensureUserHasReferralCode($user);
+    }
+
+    private function restoreReferralCode(ReferralCode $referralCode, User $user): ReferralCode
+    {
+        if ($referralCode->trashed()) {
+            $referralCode->restore();
+        }
+
+        $user->unsetRelation('referralCode');
+
+        return $referralCode->fresh() ?? $referralCode;
+    }
+
+    private function isEligibleIntroducerReseller(User $user): bool
+    {
+        $userType = $user->user_type instanceof UserType ? $user->user_type->value : (string) $user->user_type;
+        $status = $user->status instanceof UserStatus ? $user->status : UserStatus::tryFrom((string) $user->status);
+
+        if ($userType !== UserType::OWNER->value || $status !== UserStatus::ACTIVE) {
+            return false;
+        }
+
+        $user->loadMissing('company.portal');
+
+        return (bool) $user->company?->isResellerCompany();
     }
 
     public function resolveCode(?string $code): ?ReferralCode

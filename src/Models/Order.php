@@ -8,6 +8,7 @@ use Feeder\Core\Enums\OrderPaymentReviewStatus;
 use Feeder\Core\Enums\OrderSource;
 use Feeder\Core\Enums\OrderStatus;
 use Feeder\Core\Enums\OrderType;
+use Feeder\Core\Enums\ResellerReturnReason;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -49,6 +50,8 @@ class Order extends Model
         'items_subtotal',
         'discount_amount',
         'courier_fee_amount',
+        'reseller_service_charge_snapshot',
+        'reseller_courier_charge_snapshot',
         'customer_payable_amount',
         'total_weight',
         'reseller_commission_amount',
@@ -70,6 +73,8 @@ class Order extends Model
         'discount_locked_at',
         'delivered_at',
         'returned_at',
+        'return_is_damaged',
+        'return_reason',
         'created_by',
         'updated_by',
     ];
@@ -84,6 +89,8 @@ class Order extends Model
             'items_subtotal' => 'decimal:2',
             'discount_amount' => 'decimal:2',
             'courier_fee_amount' => 'decimal:2',
+            'reseller_service_charge_snapshot' => 'decimal:2',
+            'reseller_courier_charge_snapshot' => 'decimal:2',
             'customer_payable_amount' => 'decimal:2',
             'total_weight' => 'decimal:3',
             'reseller_commission_amount' => 'decimal:2',
@@ -104,6 +111,8 @@ class Order extends Model
             'discount_locked_at' => 'datetime',
             'delivered_at' => 'datetime',
             'returned_at' => 'datetime',
+            'return_is_damaged' => 'boolean',
+            'return_reason' => ResellerReturnReason::class,
         ];
     }
 
@@ -309,6 +318,41 @@ class Order extends Model
     public function stockConsumptions(): HasMany
     {
         return $this->hasMany(StockConsumption::class);
+    }
+
+    public function stockRestorations(): HasMany
+    {
+        return $this->hasMany(StockRestoration::class);
+    }
+
+    public function resellerDebtObligations(): HasMany
+    {
+        return $this->hasMany(ResellerDebtObligation::class);
+    }
+
+    public function resellerEarningObligation(): HasOne
+    {
+        return $this->hasOne(ResellerEarningObligation::class);
+    }
+
+    public function resellerSettlementInvoiceLines(): HasMany
+    {
+        return $this->hasMany(ResellerSettlementInvoiceLine::class);
+    }
+
+    public function supplierSettlementInvoiceLines(): HasMany
+    {
+        return $this->hasMany(SupplierSettlementInvoiceLine::class);
+    }
+
+    public function supplierSettlementReturnedReferences(): HasMany
+    {
+        return $this->hasMany(SupplierSettlementReturnedReference::class);
+    }
+
+    public function dispatchNoteOrder(): HasOne
+    {
+        return $this->hasOne(DispatchNoteOrder::class);
     }
 
     public function draftCourier(): BelongsTo

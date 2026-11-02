@@ -5,6 +5,7 @@ namespace Feeder\Core\Services\Order;
 use Feeder\Core\Enums\OrderStatus;
 use Feeder\Core\Enums\StockReservationStatus;
 use Feeder\Core\Events\OrderConfirmed;
+use Feeder\Core\Models\Market;
 use Feeder\Core\Models\Order;
 use Feeder\Core\Models\OrderStatusHistory;
 use Feeder\Core\Models\StockReservation;
@@ -22,6 +23,7 @@ class OrderStatusService
     public function __construct(
         private readonly OrderDiscountService $discountService,
         private readonly OrderAuthorizationGuard $authorizationGuard,
+        private readonly AfterHoursDeterminationService $afterHoursDeterminationService,
     ) {
     }
 
@@ -64,6 +66,7 @@ class OrderStatusService
      * On transition into CONFIRMED:
      * - recalculate customer payable from current snapshots
      * - lock discount via discount_locked_at
+     * - re-evaluate and persist after-hours decision + penalty snapshot at confirm time
      *
      * Status changes after CONFIRMED do not unlock the discount.
      *
@@ -133,6 +136,14 @@ class OrderStatusService
 
             if ($toStatus === OrderStatus::CONFIRMED) {
                 $attributes['confirmed_at'] = now();
+                $afterHoursSnapshot = $this->resolveAfterHoursSnapshotForConfirmation($order);
+                $attributes['after_hours'] = $afterHoursSnapshot['after_hours'];
+                $attributes['after_hours_penalty_amount'] = $afterHoursSnapshot['after_hours_penalty_amount'];
+                // Confirmation-time decision is authoritative for fines; keep any earlier
+                // warning display audit bit, and force it true when confirming after hours.
+                if ($afterHoursSnapshot['after_hours']) {
+                    $attributes['after_hours_warning_shown'] = true;
+                }
             }
 
             if ($toStatus === OrderStatus::DELIVERED && $order->delivered_at === null) {
@@ -248,6 +259,32 @@ class OrderStatusService
                 'updated_by' => $actorUserId,
             ]);
         }
+    }
+
+    /**
+     * Confirmation-time after-hours snapshot. Uses market local time at confirm,
+     * never create-time values. Persisted flags are not rewritten later.
+     *
+     * @return array{after_hours: bool, after_hours_penalty_amount: float}
+     */
+    private function resolveAfterHoursSnapshotForConfirmation(Order $order): array
+    {
+        $market = $order->relationLoaded('market') && $order->market !== null
+            ? $order->market
+            : Market::query()->find($order->market_id);
+
+        if ($market === null) {
+            throw ValidationException::withMessages([
+                'market_id' => ['Order market is required to evaluate operating hours at confirmation.'],
+            ]);
+        }
+
+        $result = $this->afterHoursDeterminationService->determine($market);
+
+        return [
+            'after_hours' => (bool) $result['after_hours'],
+            'after_hours_penalty_amount' => (float) $result['after_hours_penalty_amount'],
+        ];
     }
 
     private function resolveStatus(OrderStatus|string|Order $statusOrOrder): ?OrderStatus

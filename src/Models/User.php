@@ -152,11 +152,18 @@ class User extends Authenticatable
         return $this->hasMany(ResellerMarketServiceChargeOverride::class);
     }
 
+    public function introducerBonusTargetExceptionUpdatedBy(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'introducer_bonus_target_exception_updated_by');
+    }
+
     protected function casts(): array
     {
         return [
             'status' => UserStatus::class,
             'is_master_reseller' => 'boolean',
+            'introducer_bonus_target_exception' => 'boolean',
+            'introducer_bonus_target_exception_updated_at' => 'datetime',
             'last_login_at' => 'datetime',
             'reseller_service_charge_override' => 'decimal:2',
         ];

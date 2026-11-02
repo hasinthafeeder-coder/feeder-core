@@ -2,6 +2,7 @@
 
 namespace Feeder\Core\Models;
 
+use Feeder\Core\Enums\ProductApprovalStatus;
 use Feeder\Core\Enums\ProductStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -27,11 +28,18 @@ class Product extends Model
         'name',
         'slug',
         'status',
+        'approval_status',
         'system_visible',
         'web_visible',
         'price_locked',
         'guideline_file_id',
         'published_at',
+        'submitted_for_review_at',
+        'approved_at',
+        'approved_by',
+        'rejected_at',
+        'rejected_by',
+        'rejection_reason',
         'created_by',
         'updated_by',
     ];
@@ -43,7 +51,11 @@ class Product extends Model
             'web_visible' => 'boolean',
             'price_locked' => 'boolean',
             'status' => ProductStatus::class,
+            'approval_status' => ProductApprovalStatus::class,
             'published_at' => 'datetime',
+            'submitted_for_review_at' => 'datetime',
+            'approved_at' => 'datetime',
+            'rejected_at' => 'datetime',
         ];
     }
 
@@ -96,9 +108,45 @@ class Product extends Model
         return $this->belongsTo(File::class, 'guideline_file_id');
     }
 
+    public function approvedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function rejectedByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
+    }
+
+    public function approvalLogs(): HasMany
+    {
+        return $this->hasMany(ProductApprovalLog::class)->latest('id');
+    }
+
     public function scopeForSupplier(Builder $query, int $supplierId): Builder
     {
         return $query->where('supplier_id', $supplierId);
+    }
+
+    public function scopePendingReview(Builder $query): Builder
+    {
+        return $query->where('approval_status', ProductApprovalStatus::PENDING_REVIEW);
+    }
+
+    public function isPendingReview(): bool
+    {
+        return $this->approval_status === ProductApprovalStatus::PENDING_REVIEW;
+    }
+
+    public function isApprovalRejected(): bool
+    {
+        return $this->approval_status === ProductApprovalStatus::REJECTED;
+    }
+
+    public function isApprovalApproved(): bool
+    {
+        return $this->approval_status === ProductApprovalStatus::APPROVED
+            || ($this->approval_status === null && $this->status === ProductStatus::ACTIVE);
     }
 
     /**
