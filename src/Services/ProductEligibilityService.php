@@ -43,6 +43,17 @@ class ProductEligibilityService
             return true;
         }
 
+        // Previously approved catalog with a pending edit review remains sellable
+        // on the live approved data until the edit is applied or rejected.
+        if (
+            $approval === ProductApprovalStatus::PENDING_REVIEW
+            && $product->status === ProductStatus::ACTIVE
+            && $product->hasPendingEditChanges()
+            && $product->approved_at !== null
+        ) {
+            return true;
+        }
+
         return false;
     }
 
@@ -71,7 +82,13 @@ class ProductEligibilityService
             ->where('system_visible', true)
             ->where(function (Builder $inner): void {
                 $inner->where('approval_status', ProductApprovalStatus::APPROVED->value)
-                    ->orWhereNull('approval_status');
+                    ->orWhereNull('approval_status')
+                    ->orWhere(function (Builder $pendingEdit): void {
+                        $pendingEdit
+                            ->where('approval_status', ProductApprovalStatus::PENDING_REVIEW->value)
+                            ->whereNotNull('pending_changes')
+                            ->whereNotNull('approved_at');
+                    });
             });
     }
 

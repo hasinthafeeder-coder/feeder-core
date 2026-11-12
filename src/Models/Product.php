@@ -4,6 +4,7 @@ namespace Feeder\Core\Models;
 
 use Feeder\Core\Enums\ProductApprovalStatus;
 use Feeder\Core\Enums\ProductStatus;
+use Feeder\Core\Support\YouTubeUrl;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -33,6 +34,9 @@ class Product extends Model
         'web_visible',
         'price_locked',
         'guideline_file_id',
+        'youtube_url',
+        'warranty_available',
+        'warranty_period',
         'published_at',
         'submitted_for_review_at',
         'approved_at',
@@ -40,6 +44,7 @@ class Product extends Model
         'rejected_at',
         'rejected_by',
         'rejection_reason',
+        'pending_changes',
         'created_by',
         'updated_by',
     ];
@@ -50,8 +55,10 @@ class Product extends Model
             'system_visible' => 'boolean',
             'web_visible' => 'boolean',
             'price_locked' => 'boolean',
+            'warranty_available' => 'boolean',
             'status' => ProductStatus::class,
             'approval_status' => ProductApprovalStatus::class,
+            'pending_changes' => 'array',
             'published_at' => 'datetime',
             'submitted_for_review_at' => 'datetime',
             'approved_at' => 'datetime',
@@ -150,6 +157,19 @@ class Product extends Model
     }
 
     /**
+     * Explicit APPROVED rows (not ACTIVE + null grandfathering) require edit review.
+     */
+    public function requiresEditApproval(): bool
+    {
+        return $this->approval_status === ProductApprovalStatus::APPROVED;
+    }
+
+    public function hasPendingEditChanges(): bool
+    {
+        return is_array($this->pending_changes) && $this->pending_changes !== [];
+    }
+
+    /**
      * Products whose supplier is assigned to the given reseller.
      */
     public function scopeForReseller(Builder $query, int $resellerId): Builder
@@ -181,5 +201,23 @@ class Product extends Model
     public function supplierCompanyName(): string
     {
         return $this->supplier?->company?->name ?: '—';
+    }
+
+    public function youtubeEmbedUrl(): ?string
+    {
+        return YouTubeUrl::embedUrl($this->youtube_url);
+    }
+
+    public function hasWarranty(): bool
+    {
+        return (bool) $this->warranty_available
+            && filled(trim((string) $this->warranty_period));
+    }
+
+    public function scopeWithWarranty(Builder $query): Builder
+    {
+        return $query->where('warranty_available', true)
+            ->whereNotNull('warranty_period')
+            ->where('warranty_period', '!=', '');
     }
 }

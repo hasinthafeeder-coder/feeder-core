@@ -2,6 +2,9 @@
 
 namespace Feeder\Core\Authorization\Menu;
 
+use Feeder\Core\Services\Notification\NotificationInboxService;
+use Illuminate\Validation\ValidationException;
+
 class SupplierMenu
 {
     public static function build(): Menu
@@ -39,6 +42,31 @@ class SupplierMenu
                                 ->route('products.create')
                                 ->permission('products.create'),
                         ])
+                )
+                ->addItem(
+                    MenuItem::make('Notification Inbox')
+                        ->icon('notifications')
+                        ->route('notifications.inbox.index')
+                        ->permission('notifications.view')
+                        ->badge(function ($user) {
+                            if ($user === null || (int) $user->company_id <= 0) {
+                                return null;
+                            }
+
+                            try {
+                                $count = app(NotificationInboxService::class)->unreadCountFor($user);
+                            } catch (ValidationException) {
+                                return null;
+                            }
+
+                            return $count > 0 ? $count : null;
+                        })
+                )
+                ->addItem(
+                    MenuItem::make('Product Notifications')
+                        ->icon('campaign')
+                        ->route('notifications.index')
+                        ->permission('notifications.view')
                 )
         );
 

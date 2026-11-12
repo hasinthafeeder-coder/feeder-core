@@ -12,13 +12,17 @@ enum FileCategory: string
     case PAYMENT_PROOF = 'PAYMENT_PROOF';
     case INVOICE = 'INVOICE';
     case EXPENSE_DOCUMENT = 'EXPENSE_DOCUMENT';
+    case NOTIFICATION_BANNER = 'NOTIFICATION_BANNER';
+    case MEETING_BANNER = 'MEETING_BANNER';
 
     public function supportsThumbnail(): bool
     {
         return match ($this) {
             self::PROFILE_PHOTO,
             self::COMPANY_LOGO,
-            self::PRODUCT_IMAGE => true,
+            self::PRODUCT_IMAGE,
+            self::NOTIFICATION_BANNER,
+            self::MEETING_BANNER => true,
             default => false,
         };
     }

@@ -117,6 +117,7 @@ class Company extends Model
             'status' => CompanyStatus::class,
             'supplier_type' => SupplierType::class,
             'is_active' => 'boolean',
+            'approved_at' => 'datetime',
         ];
     }
 }

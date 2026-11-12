@@ -226,4 +226,76 @@ class SupplierInvoiceService
             ],
         ];
     }
+
+    /**
+     * Build read-only warranty certificate payloads for warranty-enabled order items.
+     * Does not mutate fulfillment status, stock, invoices, or financial totals.
+     *
+     * @return list<array{
+     *     order_id: int,
+     *     order_item_id: int,
+     *     issued_date: string,
+     *     invoice_number: string,
+     *     customer_name: string,
+     *     product_name: string,
+     *     warranty_period: string,
+     *     coverage_statement: string,
+     *     supplier_company_phone: string|null
+     * }>
+     */
+    public function buildWarrantyCertificatePayloads(Order $order): array
+    {
+        $order->loadMissing([
+            'supplier.company',
+            'address',
+            'items.product',
+            'fulfillment',
+        ]);
+
+        $fulfillment = $order->fulfillment;
+        $invoiceNumber = trim((string) ($fulfillment?->invoice_number ?: $order->order_number));
+        $issuedDate = ($fulfillment?->invoice_generated_at
+            ?? $order->confirmed_at
+            ?? $order->created_at
+            ?? now()
+        )->toDateString();
+
+        $customerName = trim((string) (
+            $order->customer_name_snapshot
+            ?? $order->address?->recipient_name
+            ?? ''
+        ));
+
+        $supplierPhone = $order->supplier?->company?->phone;
+        $supplierPhone = filled($supplierPhone) ? trim((string) $supplierPhone) : null;
+
+        $certificates = [];
+
+        foreach ($order->items as $item) {
+            $product = $item->product;
+
+            if ($product === null || ! $product->hasWarranty()) {
+                continue;
+            }
+
+            $productName = trim((string) (
+                $item->product_name_snapshot
+                ?: $product->name
+            ));
+
+            $certificates[] = [
+                'order_id' => (int) $order->id,
+                'order_item_id' => (int) $item->id,
+                'issued_date' => $issuedDate,
+                'invoice_number' => $invoiceNumber !== '' ? $invoiceNumber : (string) $order->order_number,
+                'customer_name' => $customerName !== '' ? $customerName : '—',
+                'product_name' => $productName !== '' ? $productName : '—',
+                'warranty_period' => trim((string) $product->warranty_period),
+                'coverage_statement' => 'Your product is covered against manufacturing defects for the specific period listed on your warranty card, starting from the original date of purchase.',
+                'supplier_company_phone' => $supplierPhone,
+            ];
+        }
+
+        return $certificates;
+    }
 }

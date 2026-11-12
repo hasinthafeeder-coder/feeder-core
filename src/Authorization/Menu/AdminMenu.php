@@ -333,6 +333,18 @@ class AdminMenu
                         ->route('expenses.index')
                         ->permission('expenses.view')
                 )
+                ->addItem(
+                    MenuItem::make('Notifications')
+                        ->icon('notifications')
+                        ->route('notifications.index')
+                        ->permission('notifications.view')
+                )
+                ->addItem(
+                    MenuItem::make('Reseller Meetings')
+                        ->icon('event')
+                        ->route('meetings.index')
+                        ->permission('meetings.view')
+                )
         );
 
         $menu->addSection(

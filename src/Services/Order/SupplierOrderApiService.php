@@ -157,6 +157,7 @@ class SupplierOrderApiService
 
         $orders = $query->with([
             'items.variant',
+            'items.product',
             'fulfillment',
             'shipment.courier',
             'draftCourier',
@@ -172,10 +173,15 @@ class SupplierOrderApiService
                 .($order->reseller?->profile?->last_name ?? '')
             );
 
+            $hasWarranty = $order->items->contains(
+                fn ($item) => $item->product !== null && $item->product->hasWarranty()
+            );
+
             return $this->presentListOrder($order, [
                 'fulfillment_status' => SupplierFulfillmentStatus::PRINT->value,
                 'is_print_ready' => $this->invoiceService->isPrintReady($order),
                 'is_printed' => $this->fulfillmentService->hasPrintedEvent($order),
+                'has_warranty' => $hasWarranty,
                 'invoice_number' => $order->fulfillment?->invoice_number,
                 'reseller_company_name' => $order->resellerCompany?->name,
                 'reseller_name' => $resellerName !== '' ? $resellerName : null,
@@ -187,6 +193,86 @@ class SupplierOrderApiService
             $filters,
             $this->filterOptionsForList($supplierId, $filters, 'print'),
         );
+    }
+
+    /**
+     * Build warranty certificate print payloads without mutating order state.
+     *
+     * @param  list<int>  $orderIds
+     * @return list<array<string, mixed>>
+     */
+    public function prepareWarrantyCertificateData(int $supplierId, array $orderIds): array
+    {
+        $this->authorizationGuard->assertSupplierActor($supplierId);
+
+        $orderIds = array_values(array_unique(array_map('intval', $orderIds)));
+
+        if ($orderIds === []) {
+            throw new SupplierFulfillmentException(
+                'ORDER_NOT_PRINTABLE',
+                'At least one order must be selected for warranty printing.',
+            );
+        }
+
+        if (count($orderIds) > SupplierFulfillmentBatchService::MAX_BATCH_SIZE) {
+            throw new SupplierFulfillmentException(
+                'BATCH_LIMIT_EXCEEDED',
+                'A maximum of '.SupplierFulfillmentBatchService::MAX_BATCH_SIZE.' orders can be processed at once.',
+                ['max' => SupplierFulfillmentBatchService::MAX_BATCH_SIZE, 'requested' => count($orderIds)],
+            );
+        }
+
+        $certificates = [];
+
+        foreach ($orderIds as $orderId) {
+            $order = Order::query()
+                ->where('supplier_id', $supplierId)
+                ->whereKey($orderId)
+                ->with([
+                    'supplier.company',
+                    'address',
+                    'items.product',
+                    'fulfillment',
+                ])
+                ->first();
+
+            if ($order === null) {
+                throw new SupplierFulfillmentException(
+                    'SUPPLIER_NOT_AUTHORIZED',
+                    'Order not found.',
+                    ['order_id' => $orderId],
+                    404,
+                );
+            }
+
+            if ($order->fulfillment === null
+                || $order->fulfillment->isCancelled()
+                || $order->fulfillment->status !== SupplierFulfillmentStatus::PRINT
+                || ! in_array($order->status, [OrderStatus::PRINT, OrderStatus::PRINTED], true)
+            ) {
+                throw new SupplierFulfillmentException(
+                    'ORDER_NOT_PRINTABLE',
+                    'Order is not in Print state.',
+                    ['order_id' => $order->id, 'order_number' => $order->order_number],
+                );
+            }
+
+            $orderCertificates = $this->invoiceService->buildWarrantyCertificatePayloads($order);
+
+            if ($orderCertificates === []) {
+                throw new SupplierFulfillmentException(
+                    'ORDER_NOT_PRINTABLE',
+                    'Selected order has no warranty-enabled products.',
+                    ['order_id' => $order->id, 'order_number' => $order->order_number],
+                );
+            }
+
+            foreach ($orderCertificates as $certificate) {
+                $certificates[] = $certificate;
+            }
+        }
+
+        return $certificates;
     }
 
     /**
@@ -916,6 +1002,7 @@ class SupplierOrderApiService
             'date_to' => $filters['date_to'] ?? null,
             'product_id' => null,
             'courier_id' => null,
+            'has_warranty' => null,
         ];
 
         $query = match ($list) {

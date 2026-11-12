@@ -24,7 +24,12 @@ class File extends Model
         static::deleting(function (File $file): bool {
             $category = (string) $file->category;
 
-            if ($category === FileCategory::PAYMENT_PROOF->value || $category === FileCategory::EXPENSE_DOCUMENT->value) {
+            if (
+                $category === FileCategory::PAYMENT_PROOF->value
+                || $category === FileCategory::EXPENSE_DOCUMENT->value
+                || $category === FileCategory::NOTIFICATION_BANNER->value
+                || $category === FileCategory::MEETING_BANNER->value
+            ) {
                 return false;
             }
 

@@ -2,6 +2,9 @@
 
 namespace Feeder\Core\Authorization\Menu;
 
+use Feeder\Core\Services\Notification\NotificationInboxService;
+use Illuminate\Validation\ValidationException;
+
 class ResellerMenu
 {
     public static function build(): Menu
@@ -21,6 +24,44 @@ class ResellerMenu
                         ->icon('dashboard')
                         ->route('dashboard')
                         ->permission('dashboard.view')
+                )
+                ->addItem(
+                    MenuItem::make('Notifications')
+                        ->icon('notifications')
+                        ->route('notifications.index')
+                        ->permission(NotificationInboxService::PERMISSION_VIEW)
+                        ->badge(function ($user) {
+                            if ($user === null || (int) $user->company_id <= 0) {
+                                return null;
+                            }
+
+                            try {
+                                $count = app(NotificationInboxService::class)->unreadCountFor($user);
+                            } catch (ValidationException) {
+                                return null;
+                            }
+
+                            return $count > 0 ? $count : null;
+                        })
+                )
+                ->addItem(
+                    MenuItem::make('Meetings')
+                        ->icon('event')
+                        ->route('meetings.index')
+                        ->permission('meetings.view')
+                        ->badge(function ($user) {
+                            if ($user === null || (int) $user->company_id <= 0) {
+                                return null;
+                            }
+
+                            try {
+                                $count = app(NotificationInboxService::class)->unreadMeetingCountFor($user);
+                            } catch (ValidationException) {
+                                return null;
+                            }
+
+                            return $count > 0 ? $count : null;
+                        })
                 )
         );
 

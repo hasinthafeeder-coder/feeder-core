@@ -106,6 +106,11 @@ class ProductService
                 'web_visible' => $productData['web_visible'] ?? true,
                 'price_locked' => $productData['price_locked'] ?? false,
                 'guideline_file_id' => $guideline['file_id'] ?? $productData['guideline_file_id'] ?? null,
+                'youtube_url' => $productData['youtube_url'] ?? null,
+                'warranty_available' => (bool) ($productData['warranty_available'] ?? false),
+                'warranty_period' => ($productData['warranty_available'] ?? false)
+                    ? ($productData['warranty_period'] ?? null)
+                    : null,
                 'published_at' => $status === ProductStatus::ACTIVE
                     ? ($productData['published_at'] ?? now())
                     : null,
@@ -171,6 +176,23 @@ class ProductService
                 'price_locked' => $productData['price_locked'] ?? $product->price_locked,
                 'updated_by' => $productData['updated_by'] ?? $product->updated_by ?? $product->supplier_id,
             ];
+
+            if (array_key_exists('youtube_url', $productData)) {
+                $fill['youtube_url'] = $productData['youtube_url'];
+            }
+
+            if (array_key_exists('warranty_available', $productData)
+                || array_key_exists('warranty_period', $productData)
+            ) {
+                $warrantyAvailable = array_key_exists('warranty_available', $productData)
+                    ? (bool) $productData['warranty_available']
+                    : (bool) $product->warranty_available;
+
+                $fill['warranty_available'] = $warrantyAvailable;
+                $fill['warranty_period'] = $warrantyAvailable
+                    ? ($productData['warranty_period'] ?? $product->warranty_period)
+                    : null;
+            }
 
             if (array_key_exists('name', $productData) && $productData['name'] !== $product->name) {
                 $fill['slug'] = $this->generateUniqueSlug($productData['name'], $product->id);
@@ -328,11 +350,16 @@ class ProductService
 
             // Suppliers cannot change live cost on existing variants or set commission.
             // New variants may receive an initial cost; commission always uses market default / existing.
+            // When Price Lock is off, suppliers also cannot change selling_price on existing variants.
             if ($lockAdminFinancialFields) {
                 unset($variant['company_commission']);
 
                 if ($existing !== null) {
                     $variant['cost'] = $existing->cost;
+
+                    if (! $product->price_locked) {
+                        $variant['selling_price'] = $existing->selling_price;
+                    }
                 }
             }
 

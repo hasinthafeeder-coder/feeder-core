@@ -11,6 +11,7 @@ use Feeder\Core\Models\SupplierSettlementInvoice;
 use Feeder\Core\Models\SupplierSettlementInvoiceLine;
 use Feeder\Core\Models\User;
 use Feeder\Core\Services\Finance\FinancialDailySummaryUpdater;
+use Feeder\Core\Services\Notification\FinancialNotificationService;
 use Feeder\Core\Support\MoneyNormalizer;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -33,6 +34,7 @@ class SupplierSettlementPaymentService
         private readonly MoneyNormalizer $money,
         private readonly SupplierSettlementNumberGenerator $numbers,
         private readonly FinancialDailySummaryUpdater $financialDailySummaries,
+        private readonly FinancialNotificationService $financialNotifications,
     ) {}
 
     /**
@@ -52,7 +54,7 @@ class SupplierSettlementPaymentService
     ): SupplierPayment {
         $idempotencyKey = $this->normalizeIdempotencyKey($idempotencyKey);
 
-        return DB::transaction(function () use (
+        $payment = DB::transaction(function () use (
             $invoice,
             $actor,
             $amount,
@@ -222,6 +224,15 @@ class SupplierSettlementPaymentService
 
             return $freshPayment;
         });
+
+        $freshInvoice = SupplierSettlementInvoice::query()->find($payment->invoice_id);
+        if ($freshInvoice !== null) {
+            $this->financialNotifications->afterCommit(function () use ($actor, $freshInvoice): void {
+                $this->financialNotifications->notifySupplierSettlementCompleted($actor, $freshInvoice);
+            });
+        }
+
+        return $payment;
     }
 
     /**

@@ -14,13 +14,26 @@ class ProductApprovalLog extends Model
 
     public const ACTION_REJECTED = 'REJECTED';
 
+    public const SUBMISSION_TYPE_CREATE = 'CREATE';
+
+    public const SUBMISSION_TYPE_EDIT = 'EDIT';
+
     protected $fillable = [
         'uuid',
         'product_id',
         'acted_by',
         'action',
+        'submission_type',
         'remarks',
+        'change_payload',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'change_payload' => 'array',
+        ];
+    }
 
     protected static function booted(): void
     {

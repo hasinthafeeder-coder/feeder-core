@@ -8,6 +8,7 @@ use Feeder\Core\Models\SupplierSettlementBatch;
 use Feeder\Core\Models\SupplierSettlementInvoice;
 use Feeder\Core\Models\SupplierSettlementReturnedReference;
 use Feeder\Core\Models\User;
+use Feeder\Core\Services\Notification\FinancialNotificationService;
 use Feeder\Core\Support\MoneyNormalizer;
 use Illuminate\Support\Facades\DB;
 
@@ -21,11 +22,12 @@ class SupplierSettlementLockService
     public function __construct(
         private readonly SupplierSettlementPayableEligibilityEvaluator $eligibility,
         private readonly MoneyNormalizer $money,
+        private readonly FinancialNotificationService $financialNotifications,
     ) {}
 
     public function lock(SupplierSettlementBatch $batch, User $actor): SupplierSettlementBatch
     {
-        return DB::transaction(function () use ($batch, $actor) {
+        $locked = DB::transaction(function () use ($batch, $actor) {
             $marketId = (int) ($batch->market_id
                 ?? SupplierSettlementBatch::query()->whereKey($batch->id)->value('market_id'));
 
@@ -95,6 +97,14 @@ class SupplierSettlementLockService
 
             return $locked->fresh(['invoices.payableLines', 'returnedReferences']);
         });
+
+        if ($locked->status === SupplierSettlementBatch::STATUS_LOCKED) {
+            $this->financialNotifications->afterCommit(function () use ($actor, $locked): void {
+                $this->financialNotifications->notifySupplierSettlementReady($actor, $locked);
+            });
+        }
+
+        return $locked;
     }
 
     private function revalidateInvoice(

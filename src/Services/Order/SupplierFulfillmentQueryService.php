@@ -229,7 +229,8 @@ class SupplierFulfillmentQueryService
      *     product_id?: int|null,
      *     courier_id?: int|null,
      *     date_from?: string|null,
-     *     date_to?: string|null
+     *     date_to?: string|null,
+     *     has_warranty?: bool|null
      * }  $filters
      */
     public function applyListFilters(Builder $query, array $filters): Builder
@@ -249,6 +250,12 @@ class SupplierFulfillmentQueryService
         if ($productId > 0) {
             $query->whereHas('items', function (Builder $items) use ($productId): void {
                 $items->where('product_id', $productId);
+            });
+        }
+
+        if (! empty($filters['has_warranty'])) {
+            $query->whereHas('items.product', function (Builder $products): void {
+                $products->withWarranty();
             });
         }
 

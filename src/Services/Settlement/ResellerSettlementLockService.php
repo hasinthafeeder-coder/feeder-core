@@ -7,6 +7,7 @@ use Feeder\Core\Models\Market;
 use Feeder\Core\Models\ResellerSettlementBatch;
 use Feeder\Core\Models\ResellerSettlementInvoice;
 use Feeder\Core\Models\User;
+use Feeder\Core\Services\Notification\FinancialNotificationService;
 use Feeder\Core\Support\MoneyNormalizer;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -21,11 +22,12 @@ class ResellerSettlementLockService
 {
     public function __construct(
         private readonly MoneyNormalizer $money,
+        private readonly FinancialNotificationService $financialNotifications,
     ) {}
 
     public function lock(ResellerSettlementBatch $batch, User $actor): ResellerSettlementBatch
     {
-        return DB::transaction(function () use ($batch, $actor) {
+        $locked = DB::transaction(function () use ($batch, $actor) {
             $marketId = (int) ($batch->market_id
                 ?? ResellerSettlementBatch::query()->whereKey($batch->id)->value('market_id'));
 
@@ -88,6 +90,14 @@ class ResellerSettlementLockService
 
             return $locked->fresh($this->lockRelations());
         });
+
+        if ($locked->status === ResellerSettlementBatch::STATUS_LOCKED) {
+            $this->financialNotifications->afterCommit(function () use ($actor, $locked): void {
+                $this->financialNotifications->notifyResellerSettlementReady($actor, $locked);
+            });
+        }
+
+        return $locked;
     }
 
     /**

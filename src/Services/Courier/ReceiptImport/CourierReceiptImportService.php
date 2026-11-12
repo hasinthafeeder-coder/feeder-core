@@ -12,6 +12,9 @@ use Feeder\Core\Models\Order;
 use Feeder\Core\Models\Shipment;
 use Feeder\Core\Models\User;
 use Feeder\Core\Exceptions\ResellerEarningObligationException;
+use Feeder\Core\Models\CourierRemittanceApplication;
+use Feeder\Core\Models\ResellerEarningObligation;
+use Feeder\Core\Services\Notification\FinancialNotificationService;
 use Feeder\Core\Services\Order\SupplierReturnScanService;
 use Feeder\Core\Services\Settlement\ResellerEarningObligationService;
 use Feeder\Core\Support\MoneyNormalizer;
@@ -51,6 +54,7 @@ class CourierReceiptImportService
         private readonly CourierRemittanceApplicationService $remittanceApplications,
         private readonly CourierRemittanceColumnExtractor $remittanceColumns,
         private readonly SupplierReturnScanService $returns,
+        private readonly FinancialNotificationService $financialNotifications,
     ) {}
 
     /**
@@ -486,6 +490,8 @@ class CourierReceiptImportService
             ->with(['rows', 'courierService.courier', 'confirmer.profile', 'uploader.profile'])
             ->findOrFail($importId);
 
+        $this->dispatchDeliveryNotifications($admin, $result['row_outcomes'] ?? []);
+
         $preview = $this->serializePreview($confirmedImport);
 
         return [
@@ -502,6 +508,39 @@ class CourierReceiptImportService
                 'row_outcomes' => $result['row_outcomes'],
             ],
         ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rowOutcomes
+     */
+    private function dispatchDeliveryNotifications(User $admin, array $rowOutcomes): void
+    {
+        foreach ($rowOutcomes as $outcome) {
+            if (($outcome['outcome'] ?? null) !== 'delivered' || empty($outcome['order_id'])) {
+                continue;
+            }
+
+            $order = Order::query()->find((int) $outcome['order_id']);
+            if ($order === null) {
+                continue;
+            }
+
+            $obligation = ResellerEarningObligation::query()
+                ->where('order_id', $order->id)
+                ->first();
+
+            $application = null;
+            if (! empty($outcome['application_id'])) {
+                $application = CourierRemittanceApplication::query()->find((int) $outcome['application_id']);
+            }
+
+            $this->financialNotifications->notifyOrderDelivered(
+                $admin,
+                $order,
+                $obligation,
+                $application,
+            );
+        }
     }
 
     /**
@@ -667,6 +706,7 @@ class CourierReceiptImportService
             'match_result' => $matchValue,
             'order_id' => $application['order_id'],
             'order_number' => $application['order_number'] ?? $row->matched_order_number,
+            'application_id' => $application['application_id'] ?? null,
             'outcome' => $outcome,
             'message' => $application['message'],
         ];

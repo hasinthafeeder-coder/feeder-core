@@ -7,10 +7,13 @@ use Feeder\Core\Console\Commands\AuditFardarLocationsCommand;
 use Feeder\Core\Console\Commands\AuditLegacyOrderLifecycleCommand;
 use Feeder\Core\Console\Commands\CleanupFardarLocationsCommand;
 use Feeder\Core\Console\Commands\ImportCourierLocationsCommand;
+use Feeder\Core\Console\Commands\ProcessDailyFinancialNotificationSummariesCommand;
 use Feeder\Core\Console\Commands\ProcessDailyResellerSettlementBatchesCommand;
 use Feeder\Core\Console\Commands\ProcessDailySupplierSettlementBatchesCommand;
+use Feeder\Core\Console\Commands\ProcessMeetingRemindersCommand;
 use Feeder\Core\Console\Commands\SyncCourierLocationsCommand;
 use Feeder\Core\Contracts\PermissionServiceInterface;
+use Feeder\Core\Enums\PortalCode;
 use Feeder\Core\Services\CountryRegistrationRuleService;
 use Feeder\Core\Services\Courier\CourierBookingAdapterResolver;
 use Feeder\Core\Services\Courier\CourierConnectionService;
@@ -82,6 +85,22 @@ use Feeder\Core\Services\PermissionService;
 use Feeder\Core\Authorization\Services\MenuService;
 use Feeder\Core\Services\Expense\CompanyExpenseLedgerService;
 use Feeder\Core\Services\Expense\CompanyExpenseReferenceGenerator;
+use Feeder\Core\Services\Meeting\MeetingAttendanceReportService;
+use Feeder\Core\Services\Meeting\MeetingBannerService;
+use Feeder\Core\Services\Meeting\MeetingCheckInService;
+use Feeder\Core\Services\Meeting\MeetingCheckInTokenService;
+use Feeder\Core\Services\Meeting\ResellerMeetingPortalService;
+use Feeder\Core\Services\Meeting\MeetingEligibilityService;
+use Feeder\Core\Services\Meeting\MeetingExcuseService;
+use Feeder\Core\Services\Meeting\MeetingManagementService;
+use Feeder\Core\Services\Meeting\MeetingNotificationService;
+use Feeder\Core\Services\Meeting\MeetingReminderService;
+use Feeder\Core\Services\Notification\NotificationInboxService;
+use Feeder\Core\Services\Notification\NotificationPublicationService;
+use Feeder\Core\Services\Notification\ResellerProductNotificationRecipientResolver;
+use Feeder\Core\Services\Notification\ResellerUserNotificationRecipientResolver;
+use Feeder\Core\Services\Notification\SupplierAssignedResellerRecipientResolver;
+use Feeder\Core\Services\Notification\SupplierNotificationRecipientResolver;
 use Feeder\Core\Support\CredentialsEncrypter;
 use Feeder\Core\Support\MoneyNormalizer;
 use Illuminate\Support\Facades\Gate;
@@ -128,6 +147,22 @@ class FeederCoreServiceProvider extends ServiceProvider
         $this->app->singleton(MoneyNormalizer::class);
         $this->app->singleton(CompanyExpenseReferenceGenerator::class);
         $this->app->singleton(CompanyExpenseLedgerService::class);
+        $this->app->singleton(SupplierNotificationRecipientResolver::class);
+        $this->app->singleton(ResellerProductNotificationRecipientResolver::class);
+        $this->app->singleton(ResellerUserNotificationRecipientResolver::class);
+        $this->app->singleton(SupplierAssignedResellerRecipientResolver::class);
+        $this->app->singleton(NotificationPublicationService::class);
+        $this->app->singleton(NotificationInboxService::class);
+        $this->app->singleton(MeetingEligibilityService::class);
+        $this->app->singleton(MeetingCheckInTokenService::class);
+        $this->app->singleton(ResellerMeetingPortalService::class);
+        $this->app->singleton(MeetingNotificationService::class);
+        $this->app->singleton(MeetingBannerService::class);
+        $this->app->singleton(MeetingManagementService::class);
+        $this->app->singleton(MeetingCheckInService::class);
+        $this->app->singleton(MeetingExcuseService::class);
+        $this->app->singleton(MeetingAttendanceReportService::class);
+        $this->app->singleton(MeetingReminderService::class);
         $this->app->singleton(CourierReceiptSpreadsheetReader::class);
         $this->app->singleton(FeederCourierPaymentTemplateParser::class);
         $this->app->singleton(RoyalExpressInvoiceParser::class);
@@ -186,6 +221,8 @@ class FeederCoreServiceProvider extends ServiceProvider
                 CleanupFardarLocationsCommand::class,
                 ProcessDailySupplierSettlementBatchesCommand::class,
                 ProcessDailyResellerSettlementBatchesCommand::class,
+                ProcessDailyFinancialNotificationSummariesCommand::class,
+                ProcessMeetingRemindersCommand::class,
             ]);
         }
 
@@ -198,12 +235,46 @@ class FeederCoreServiceProvider extends ServiceProvider
         });
 
         View::composer('layout_main.app', function ($view) {
+            $headerUnread = 0;
+            $headerRecipients = collect();
+            $headerIndexRoute = null;
+            $headerShowRoute = null;
+
             if (auth()->check()) {
-                $view->with(
-                    'menu',
-                    app(MenuService::class)->getForUser(auth()->user())
-                );
+                $user = auth()->user();
+                $view->with('menu', app(MenuService::class)->getForUser($user));
+
+                if (method_exists($user, 'hasPermission')
+                    && $user->hasPermission(NotificationInboxService::PERMISSION_VIEW)
+                ) {
+                    $user->loadMissing('company.portal');
+                    $portalCode = $user->company?->portal?->code;
+
+                    [$headerIndexRoute, $headerShowRoute] = match ($portalCode) {
+                        PortalCode::RESELLER->value => ['notifications.index', 'notifications.show'],
+                        PortalCode::SUPPLIER->value => ['notifications.inbox.index', 'notifications.inbox.show'],
+                        default => [null, null],
+                    };
+
+                    if ($headerIndexRoute !== null) {
+                        try {
+                            $inbox = app(NotificationInboxService::class);
+                            $headerUnread = $inbox->unreadCountFor($user);
+                            $headerRecipients = $inbox->recentVisibleFor($user, 5);
+                        } catch (\Throwable) {
+                            $headerUnread = 0;
+                            $headerRecipients = collect();
+                        }
+                    }
+                }
             }
+
+            $view->with([
+                'headerNotificationUnreadCount' => $headerUnread,
+                'headerNotificationRecipients' => $headerRecipients,
+                'headerNotificationIndexRoute' => $headerIndexRoute,
+                'headerNotificationShowRoute' => $headerShowRoute,
+            ]);
         });
     }
 }

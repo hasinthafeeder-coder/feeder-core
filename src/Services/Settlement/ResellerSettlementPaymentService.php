@@ -10,6 +10,7 @@ use Feeder\Core\Models\ResellerSettlementInvoice;
 use Feeder\Core\Models\ResellerSettlementInvoiceLine;
 use Feeder\Core\Models\User;
 use Feeder\Core\Services\Finance\FinancialDailySummaryUpdater;
+use Feeder\Core\Services\Notification\FinancialNotificationService;
 use Feeder\Core\Support\MoneyNormalizer;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -30,6 +31,7 @@ class ResellerSettlementPaymentService
         private readonly MoneyNormalizer $money,
         private readonly ResellerSettlementNumberGenerator $numbers,
         private readonly FinancialDailySummaryUpdater $financialDailySummaries,
+        private readonly FinancialNotificationService $financialNotifications,
     ) {}
 
     public function record(
@@ -43,7 +45,7 @@ class ResellerSettlementPaymentService
     ): ResellerPayment {
         $idempotencyKey = $this->normalizeIdempotencyKey($idempotencyKey);
 
-        return DB::transaction(function () use (
+        $payment = DB::transaction(function () use (
             $invoice,
             $actor,
             $amount,
@@ -241,6 +243,15 @@ class ResellerSettlementPaymentService
 
             return $freshPayment;
         });
+
+        $freshInvoice = ResellerSettlementInvoice::query()->find($payment->invoice_id);
+        if ($freshInvoice !== null) {
+            $this->financialNotifications->afterCommit(function () use ($actor, $freshInvoice): void {
+                $this->financialNotifications->notifyResellerSettlementCompleted($actor, $freshInvoice);
+            });
+        }
+
+        return $payment;
     }
 
     /**
